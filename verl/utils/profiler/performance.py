@@ -22,7 +22,7 @@ import torch
 import torch.distributed as dist
 from codetiming import Timer
 
-from verl.utils.device import get_device_id, get_torch_device
+from verl.utils.device import get_device_id, get_torch_device, get_device_name
 from verl.utils.logger import DecoratorLoggerBase
 
 
@@ -40,9 +40,12 @@ def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> tuple[str]:
         in the specified unit.
     """
     assert unit in ["GB", "MB", "KB"]
-    device = get_torch_device()
-    # torch.cpu.memory_allocated() does not exist
-    if device == torch.cpu:
+    # Detect the device type at call time. Relying on a module-level flag
+    # (e.g. cached torch.cuda.is_available() at import time) can be incorrect
+    # if CUDA/NPU becomes available after module import. Use get_device_name()
+    # which queries availability dynamically.
+    if get_device_name() == "cpu":
+        print("Current device is set to CPU. No information about GPU memory present.")
         return "0.00", "0.00", "0.00", "0.00"
 
     divisor = 1024**3 if unit == "GB" else 1024**2 if unit == "MB" else 1024

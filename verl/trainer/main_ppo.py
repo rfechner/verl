@@ -28,7 +28,8 @@ from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 from verl.trainer.ppo.reward import load_reward_manager
 from verl.trainer.ppo.utils import need_critic, need_reference_policy
 from verl.utils.config import validate_config
-from verl.utils.device import is_cuda_available
+from verl.utils.device import get_device_name
+import torch
 from verl.utils.import_utils import load_extern_type
 
 
@@ -41,6 +42,45 @@ def main(config):
     """
     run_ppo(config)
 
+# def run_ppo2(config) -> None:
+
+#     """
+#         For multi-node trainig, we have to have already initialized ray. For manual runs,
+#         we have to initialize manually.
+#     """
+#     ray_address = os.environ.get('RAY_ADDRESS')
+#     ray_temp_dir = os.environ.get('RAY_TMPDIR')
+#     if ray_address:
+#         init_kwargs = {
+#             'address': ray_address,
+#             'runtime_env': {
+#                 'env_vars': {
+#                     'TOKENIZERS_PARALLELISM': 'true',
+#                     'NCCL_DEBUG': 'WARN',
+#                     'VLLM_LOGGING_LEVEL': 'WARN'
+#                 }
+#             }
+#         }
+#     else:
+#         """
+#             Previous manual initialization
+#         """
+#         init_kwargs={
+#             'runtime_env' : {
+#                 'env_vars': {
+#                     'TOKENIZERS_PARALLELISM': 'true',
+#                     'NCCL_DEBUG': 'WARN',
+#                     'VLLM_LOGGING_LEVEL': 'WARN'
+#                 }
+#             }
+#         }
+
+#     # Add temp_dir if specified
+#     if ray_temp_dir:
+#         init_kwargs['_temp_dir'] = ray_temp_dir
+#     ray.init(**init_kwargs)
+
+#     ray.get(main_task.remote(config))
 
 # Define a function to run the PPO-like training process
 def run_ppo(config) -> None:
@@ -52,6 +92,7 @@ def run_ppo(config) -> None:
                 model paths, and training hyperparameters.
     """
     # Check if Ray is not initialized
+    print(f"Ray initialized: {ray.is_initialized()}")
     if not ray.is_initialized():
         # Initialize Ray with a local cluster configuration
         # Set environment variables in the runtime environment to control tokenizer parallelism,
@@ -59,16 +100,63 @@ def run_ppo(config) -> None:
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
         default_runtime_env = get_ppo_ray_runtime_env()
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
+        ray_address = os.environ.get('RAY_ADDRESS')
+        ray_temp_dir = os.environ.get('RAY_TMPDIR')
+        if ray_address:
+            print(f"Current ray address: {ray_address}")
+            ray_init_kwargs = {
+                'address': ray_address,
+                'runtime_env' : {
+                    'working_dir': './',
+                    'excludes' : ["/.git/"],
+                    'env_vars': {
+                        'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
+                        'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
+                        'TOKENIZERS_PARALLELISM': 'true',
+                        'NCCL_DEBUG': 'WARN',
+                        'VLLM_LOGGING_LEVEL': 'WARN'
+                    }
+                }
+            }
+        else:
+            """
+                Previous manual initialization
+            """
+            print("No ray address available.")
+            ray_init_kwargs = {
+                'runtime_env' : {
+                    'working_dir': './',
+                    'excludes' : ["/.git/"],
+                    'env_vars': {
+                        'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
+                        'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
+                        'TOKENIZERS_PARALLELISM': 'true',
+                        'NCCL_DEBUG': 'WARN',
+                        'VLLM_LOGGING_LEVEL': 'WARN'
+                    }
+                }
+            }
+        if ray_temp_dir:
+            ray_init_kwargs['_temp_dir'] = ray_temp_dir
+
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
         print(f"ray init kwargs: {ray_init_kwargs}")
         ray.init(**OmegaConf.to_container(ray_init_kwargs))
 
+    # Print runtime device availability (do NOT rely on module-level cached booleans)
+    try:
+        cuda_available_runtime = torch.cuda.is_available()
+    except Exception:
+        cuda_available_runtime = False
+    print(f"runtime torch.cuda.is_available(): {cuda_available_runtime}")
+    print(f"runtime device name: {get_device_name()}")
+
     # Create a remote instance of the TaskRunner class, and
     # Execute the `run` method of the TaskRunner instance remotely and wait for it to complete
     if (
-        is_cuda_available
+        cuda_available_runtime
         and config.global_profiler.tool == "nsys"
         and config.global_profiler.get("steps") is not None
         and len(config.global_profiler.get("steps", [])) > 0

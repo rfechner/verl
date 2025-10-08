@@ -1,0 +1,118 @@
+#!/bin/bash
+# Manual training script used to run on interactive nodes.
+# Set fixed values and defaults
+LEARNING_RATE=1e-6
+TOTAL_EPOCHS=10
+TRAIN_BATCH_SIZE=512
+MAX_PROMPT_LENGTH=1024
+MAX_RESPONSE_LENGTH=768
+SAVE_FREQ=5
+TEST_FREQ=2
+NNODES=1
+RAY_DATA_HOME=${RAY_DATA_HOME:-"/u/rfechner"}  # Base directory for data and checkpoints
+ENTROPY_COEF=0.0
+KL_LOSS_COEF=0.0
+MODEL_PATH="Qwen/Qwen2.5-1.5B"
+PROJECT_NAME="entropy_logging"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+DATA_SEED=42
+
+EXPNAME="DEBUG_${MODEL_PATH}_entropy_${ENTROPY_COEF}_kl_${KL_LOSS_COEF}_${TIMESTAMP}"
+CHECKPOINT_DIR="${RAY_DATA_HOME}/out/${PROJECT_NAME}/${EXPNAME}"  # Checkpoint directory
+TRAIN_FILES="/u/rfechner/data/math/train.parquet"
+VAL_FILES="/u/rfechner/data/math500/test.parquet"
+
+echo "Configuration:"
+echo "  Train files: $TRAIN_FILES"
+echo "  Val files: $VAL_FILES"
+echo "  Model: $MODEL_PATH"
+echo "  Learning rate: $LEARNING_RATE (fixed)"
+echo "  Entropy coefficient: $ENTROPY_COEF"
+echo "  KL loss coefficient: $KL_LOSS_COEF"
+echo "  Total epochs: $TOTAL_EPOCHS (fixed)"
+echo "  Project name: $PROJECT_NAME"
+echo "  Nodes: $NNODES (fixed)"
+echo "========================================================"
+
+# Unset AMD GPU default flags. Required by verl.
+unset ROCR_VISIBLE_DEVICES
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) Load modules and activate your Conda env
+# ─────────────────────────────────────────────────────────────────────────────
+echo "Loading environment modules..."
+module purge
+module load anaconda/3/2023.03
+module load cuda/12.6
+module load cudnn/9.5.1
+module load nccl/2.23.4
+module load gcc/10
+
+module list
+
+# >>> conda initialize >>>
+__conda_setup="$('/mpcdf/soft/SLE_15/packages/x86_64/anaconda/3/2023.03/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/mpcdf/soft/SLE_15/packages/x86_64/anaconda/3/2023.03/etc/profile.d/conda.sh" ]; then
+        . "/mpcdf/soft/SLE_15/packages/x86_64/anaconda/3/2023.03/etc/profile.d/conda.sh"
+    else
+        export PATH="/mpcdf/soft/SLE_15/packages/x86_64/anaconda/3/2023.03/bin:$PATH"
+    fi
+fi
+unset __conda_setup
+# <<< conda initialize <<<
+
+export VERL_LOGGING_LEVEL=DEBUG
+
+# Activate your environment
+conda activate verl
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2) Start Training
+# ─────────────────────────────────────────────────────────────────────────────
+echo "Starting training..."
+python -u -m verl.trainer.main_ppo \
+        algorithm.adv_estimator=grpo \
+        data.train_files="$TRAIN_FILES" \
+        data.val_files=$VAL_FILES \
+        data.train_batch_size=$TRAIN_BATCH_SIZE \
+        data.max_prompt_length=$MAX_PROMPT_LENGTH \
+        data.max_response_length=$MAX_RESPONSE_LENGTH \
+        data.truncation=left \
+        +data.seed=$DATA_SEED \
+        actor_rollout_ref.model.use_remove_padding=True \
+        actor_rollout_ref.model.use_fused_kernels=True \
+        actor_rollout_ref.model.path=$MODEL_PATH \
+        actor_rollout_ref.actor.use_dynamic_bsz=True \
+        actor_rollout_ref.actor.optim.lr=$LEARNING_RATE \
+        actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$((1 * (MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))) \
+        actor_rollout_ref.actor.use_kl_loss=False \
+        actor_rollout_ref.actor.kl_loss_coef=$KL_LOSS_COEF \
+        actor_rollout_ref.actor.entropy_coeff=$ENTROPY_COEF \
+        actor_rollout_ref.actor.fsdp_config.param_offload=True \
+        actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+        actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+        actor_rollout_ref.rollout.gpu_memory_utilization=0.3 \
+        actor_rollout_ref.rollout.enable_chunked_prefill=True \
+        actor_rollout_ref.rollout.max_num_batched_tokens=$((6 * (MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))) \
+        actor_rollout_ref.rollout.n=8 \
+        actor_rollout_ref.rollout.name=vllm \
+        actor_rollout_ref.ref.fsdp_config.param_offload=True \
+        actor_rollout_ref.rollout.disable_log_stats=False \
+        actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$((2 * (MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))) \
+        actor_rollout_ref.actor.strategy=fsdp2 \
+        algorithm.use_kl_in_reward=False \
+        trainer.default_local_dir="${CHECKPOINT_DIR}" \
+        trainer.project_name="$PROJECT_NAME" \
+        trainer.logger=console \
+        trainer.val_before_train=False \
+        trainer.n_gpus_per_node=4 \
+        trainer.nnodes=$NNODES \
+        trainer.save_freq=$SAVE_FREQ \
+        trainer.test_freq=$TEST_FREQ \
+        trainer.default_local_dir="${CHECKPOINT_DIR}" \
+        +trainer.remove_previous_ckpt_in_save=True \
+        trainer.total_epochs=$TOTAL_EPOCHS

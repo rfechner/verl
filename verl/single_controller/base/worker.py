@@ -202,6 +202,7 @@ class Worker(WorkerHelper):
         rocr_val = os.environ.get("ROCR_VISIBLE_DEVICES", None)
         hip_val = os.environ.get("HIP_VISIBLE_DEVICES", None)
         cuda_val = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        
         if hip_val:
             # Switch the use of HIP_VISIBLE_DEVICES to CUDA_VISIBLE_DEVICES for consistency.
             # Make sure that the HIP_VISIBLE_DEVICES is set to the same value as CUDA_VISIBLE_DEVICES

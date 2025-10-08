@@ -43,7 +43,7 @@ def get_device_name() -> str:
     Returns:
         device
     """
-    if is_cuda_available:
+    if torch.cuda.is_available(): # changed from static import time variable "is_cuda_available"
         device = "cuda"
     elif is_npu_available:
         device = "npu"
