@@ -612,6 +612,96 @@ class RayPPOTrainer:
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
+        # --- New: compute log-probs for a precomputed file if provided ---
+        compute_file = self.config.trainer.get("compute_logprob_from_file", None)
+        compute_batch_size = self.config.trainer.get("compute_logprob_batch_size", 64)
+        val_data_dir_cfg = self.config.trainer.get("validation_data_dir", None)
+
+        if compute_file is not None and compute_file != '':
+            # Expect JSONL with keys: input, output
+            import json
+
+            out_path = None
+            if val_data_dir_cfg:
+                os.makedirs(val_data_dir_cfg, exist_ok=True)
+                out_path = os.path.join(val_data_dir_cfg, f"{self.global_steps}_precomp.jsonl")
+            else:
+                out_path = os.path.join(self.config.trainer.default_local_dir, f"{self.global_steps}_precomp.jsonl")
+
+            lines_out = []
+            batch_inputs = []
+            batch_outputs = []
+            batch_uids = []
+
+            def flush_logprob_batch():
+                if len(batch_inputs) == 0:
+                    return
+                # tokenize and build DataProto
+                enc_inputs = self.tokenizer(batch_inputs, return_tensors="pt", padding=True)
+                enc_outputs = self.tokenizer(batch_outputs, return_tensors="pt", padding=True)
+
+                # build concatenated input_ids = prompt + response
+                input_ids = torch.cat([enc_inputs.input_ids, enc_outputs.input_ids[:, 1:]], dim=1)
+                attention_mask = torch.cat([enc_inputs.attention_mask, enc_outputs.attention_mask[:, 1:]], dim=1)
+                # position ids simple arange
+                seq_len = input_ids.shape[1]
+                position_ids = torch.arange(seq_len).unsqueeze(0).expand(input_ids.shape[0], -1)
+
+                # responses should be the response token ids (without BOS)
+                responses = enc_outputs.input_ids[:, 1:]
+
+                meta = {
+                    "micro_batch_size": min(compute_batch_size, input_ids.shape[0]),
+                    "temperature": 1.0,
+                    "use_dynamic_bsz": False,
+                }
+
+                tensors = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                    "responses": responses,
+                }
+                non_tensors = {"uid": np.array(batch_uids, dtype=object)}
+                dp = DataProto.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info=meta)
+
+                # call actor worker group to compute log-probs
+                lp, ent = self.actor_rollout_wg.compute_log_prob(dp, calculate_entropy=False)
+
+                # lp: (B, resp_len)
+                lp_sum = lp.sum(-1).cpu().tolist()
+                lp_tokens = [row.cpu().tolist() for row in lp]
+
+                for uid, inp, outp, tot_lp, toks in zip(batch_uids, batch_inputs, batch_outputs, lp_sum, lp_tokens):
+                    entry = {"uid": uid, "input": inp, "output": outp, "total_logprob": tot_lp, "token_logprob": toks, "step": self.global_steps}
+                    lines_out.append(json.dumps(entry, ensure_ascii=False))
+
+                # clear buffers
+                batch_inputs.clear()
+                batch_outputs.clear()
+                batch_uids.clear()
+
+            # stream the input file
+            with open(compute_file, "r") as f:
+                for line in f:
+                    data = json.loads(line)
+                    inp = data.get("input") or data.get("prompt")
+                    outp = data.get("output") or data.get("response")
+                    uid = data.get("uid", str(uuid.uuid4()))
+                    batch_inputs.append(inp)
+                    batch_outputs.append(outp)
+                    batch_uids.append(uid)
+                    if len(batch_inputs) >= compute_batch_size:
+                        flush_logprob_batch()
+                # flush remaining
+                flush_logprob_batch()
+
+            # write out
+            if out_path is not None:
+                with open(out_path, "w") as fo:
+                    fo.write("\n".join(lines_out) + "\n")
+                print(f"Wrote precomputed logprobs to {out_path}")
+
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
         # dump generations

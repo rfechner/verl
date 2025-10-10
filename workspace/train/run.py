@@ -5,7 +5,15 @@ import os
 import subprocess
 from typing import Dict, List
 
+"""
+    Main training run entrypoint. Currently supports GRPO, DAPO, and Dr. GRPO. The purpose of this script
+    is to unity the export of environment variables for performance tuning, sampling and other critical hyperparameters,
+    such that we may be sure that we're making fair comparisons.
 
+    This script exports environment variables, which are accessed by the shell scripts which start the training. For ease of implementation
+    There are some parameters which are only set INSIDE the shell scripts, such that we can, but musn't use every exported parameter. Additionally,
+    there are some non-standart parameters which we have to set for some algorithms, it's better to hardcode these.
+"""
 def validate_file(path: str) -> str:
     path = os.path.abspath(path)
     if not os.path.exists(path):
@@ -37,6 +45,8 @@ def main():
     parser.add_argument("--val-file", default="/u/rfechner/data/math500/test.parquet")
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
     parser.add_argument("--tp", type=int, default=4, help="Tensor model parallel size (tensor parallelism)")
+    parser.add_argument("--valn", type=int, default=64, help="Number of validation samples to dump per validation step.")
+    parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
 
     args = parser.parse_args()
 
@@ -61,7 +71,7 @@ def main():
     this_dir = os.path.dirname(os.path.abspath(__file__))
     entrypoint_script = os.path.join(this_dir, f"{args.method}_entrypoint.sh")
 
-    # Build config with UPPERCASE env var names expected by shell scripts
+    # base hyperparams. These are the variable and "important" parameters
     config = {
         "model_path": args.model,
         "train_files": train_file,
@@ -70,6 +80,7 @@ def main():
         "identifier": args.identifier or "",
         "checkpoint_dir": checkpoint_dir,
         "tensor_model_parallel_size": args.tp,
+        "rollout_val_n" : args.valn,
         "train_batch_size": 512,
         "total_epochs": 10,
         "max_prompt_length": 1024,
@@ -83,45 +94,6 @@ def main():
         "top_p" : 1.0, # training top-p
         "val_top_p" : 0.7
     }
-
-    # Non-shared, hard-coded parameters in entrypoint scripts
-    #
-    # The entrypoint scripts (`dapo_entrypoint.sh` and `grpo_entrypoint.sh`) call
-    # `python -m verl.trainer.main_ppo` and pass many flags. Most flags are
-    # provided via the `config` dict above and therefore shared. The items
-    # below are NOT exported from `run.py` and are hard-coded (or defaulted)
-    # directly in the respective entrypoint script. Keep this list in sync
-    # with those scripts if you change behavior.
-    #
-    # grpo_entrypoint.sh (hard-coded literals)
-    #   actor_rollout_ref.actor.use_kl_loss=True
-    #   actor_rollout_ref.actor.kl_loss_coef=0.001
-    #   actor_rollout_ref.actor.kl_loss_type=low_var_kl
-    #   actor_rollout_ref.actor.clip_ratio=0.2
-    #
-    # dapo_entrypoint.sh (hard-coded literals and bash-defaulted values)
-    #   actor_rollout_ref.actor.kl_loss_coef=0.0
-    #   actor_rollout_ref.actor.use_kl_loss=False
-    #   actor_rollout_ref.actor.entropy_coeff=0.0
-    #   actor_rollout_ref.actor.clip_ratio_low=0.2
-    #   actor_rollout_ref.actor.clip_ratio_high=0.28
-    #   actor_rollout_ref.actor.clip_ratio_c=10.0
-    #   actor_rollout_ref.actor.loss_agg_mode='token-mean'
-    #   algorithm.use_kl_in_reward=False
-    #
-    # dapo also provides defaults for reward-related flags using bash
-    # parameter expansion. If the corresponding environment variables are
-    # not exported these defaults are used by the script:
-    #   reward_model.reward_manager -> default: "dapo" (via ${reward_model_reward_manager:-dapo})
-    #   +reward_model.reward_kwargs.overlong_buffer_cfg.enable -> default: True
-    #   +reward_model.reward_kwargs.overlong_buffer_cfg.len -> default: 512
-    #   +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor -> default: -1.0
-    #   +reward_model.reward_kwargs.overlong_buffer_cfg.log -> default: False
-    #
-    # Note: flags that compute values with shell arithmetic or reference
-    # variables from `run.py` (e.g. $max_prompt_length, $max_response_length,
-    # $grad_clip, $rollout_engine, etc.) are considered shared because their
-    # values come from the exported `config` above.
 
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({
@@ -152,7 +124,13 @@ def main():
         # rollout shared flags
         "rollout_log_prob_use_dynamic_bsz": True,
         "rollout_val_do_sample": True,
-        "rollout_val_n": 1,
+        # where to dump validation generations (placed next to checkpoints by default)
+        "trainer_validation_data_dir": os.path.join("/u/rfechner/out", args.project_name, expname, "val_jsonl"),
+
+        # optional: precomputed Q+A file for which to compute log-probs during validation
+        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/precomputed_logprob_test.jsonl",
+        # batch size for computing log-probs on actor workers
+        "trainer_compute_logprob_batch_size": 64,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
         # trainer shared flags
@@ -162,6 +140,12 @@ def main():
         "trainer_n_gpus_per_node": 4,
         "trainer_nnodes": 2,
         "trainer_remove_previous_ckpt_in_save": False,
+    })
+
+    # export which conda env to activate in the entrypoint scripts
+    conda_env = "flashinfer" if args.flashinfer else "verl"
+    config.update({
+        "conda_env": conda_env,
     })
 
     export_list = collect_export_vars(config)

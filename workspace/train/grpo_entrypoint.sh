@@ -14,6 +14,20 @@
 #SBATCH --mem=500000                                        # Request all available memory on the node. Can be specific e.g., "200G".
 #SBATCH --chdir=./                                          # Set working directory to submission directory.
 
+# vLLM + FLashinfer and multinode recommended flags
+export NCCL_CUMEM_ENABLE=1
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_P2P_LEVEL=SYS
+export NCCL_LAUNCH_MODE=GROUP
+export CUDA_DEVICE_MAX_CONNECTIONS=32
+if [ "${conda_env:-}" = "flashinfer" ]; then
+    export VLLM_USE_FLASHINFER=1
+    export FLASHINFER_ENABLE=1
+else
+    export VLLM_USE_FLASHINFER=0
+    export FLASHINFER_ENABLE=0
+fi
+
 echo "========================================================"
 echo "Starting VERL Training Job: $SLURM_JOB_NAME"
 echo "Job ID: $SLURM_JOB_ID"
@@ -65,8 +79,14 @@ fi
 unset __conda_setup
 # <<< conda initialize <<<
 
-# Activate your environment
-conda activate verl
+# Activate your environment (use exported `conda_env`, default to 'verl')
+if [ -z "${conda_env:-}" ]; then
+    target_conda_env="verl"
+else
+    target_conda_env="$conda_env"
+fi
+echo "Activating conda environment: $target_conda_env"
+conda activate "$target_conda_env"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) Set up Ray cluster (only if using multiple nodes)
@@ -144,6 +164,7 @@ python -u -m verl.trainer.main_ppo \
     data.max_response_length=$max_response_length \
     data.truncation=${data_truncation} \
     actor_rollout_ref.model.use_remove_padding=${actor_model_use_remove_padding} \
+    actor_rollout_ref.model.use_fused_kernels=true \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.model.enable_gradient_checkpointing=${actor_model_enable_gradient_checkpointing} \
     actor_rollout_ref.model.enable_activation_offload=${actor_model_enable_activation_offload} \
@@ -184,6 +205,9 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=${rollout_val_do_sample} \
     actor_rollout_ref.rollout.val_kwargs.n=${rollout_val_n} \
     actor_rollout_ref.rollout.disable_log_stats=${rollout_disable_log_stats} \
+    +trainer.validation_data_dir=${trainer_validation_data_dir} \
+    +trainer.compute_logprob_from_file=${trainer_compute_logprob_from_file} \
+    +trainer.compute_logprob_batch_size=${trainer_compute_logprob_batch_size} \
     trainer.resume_mode=${trainer_resume_mode} \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \

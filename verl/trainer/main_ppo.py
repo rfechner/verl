@@ -99,43 +99,25 @@ def run_ppo(config) -> None:
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
         default_runtime_env = get_ppo_ray_runtime_env()
-        ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
+        ray_init_kwargs = {
+            'runtime_env' : {
+                'working_dir': 'verl/',
+                'excludes' : ["/.git/"],
+                'env_vars': {
+                    'ROCR_VISIBLE_DEVICES' : "", # unset ROCR visible devices. Required by verl.
+                    'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
+                    'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
+                    'TOKENIZERS_PARALLELISM': 'true',
+                    'NCCL_DEBUG': 'WARN',
+                    'VLLM_LOGGING_LEVEL': 'WARN'
+                }
+            }
+        }
         ray_address = os.environ.get('RAY_ADDRESS')
         ray_temp_dir = os.environ.get('RAY_TMPDIR')
+        
         if ray_address:
-            print(f"Current ray address: {ray_address}")
-            ray_init_kwargs = {
-                'address': ray_address,
-                'runtime_env' : {
-                    'working_dir': './',
-                    'excludes' : ["/.git/"],
-                    'env_vars': {
-                        'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
-                        'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
-                        'TOKENIZERS_PARALLELISM': 'true',
-                        'NCCL_DEBUG': 'WARN',
-                        'VLLM_LOGGING_LEVEL': 'WARN'
-                    }
-                }
-            }
-        else:
-            """
-                Previous manual initialization
-            """
-            print("No ray address available.")
-            ray_init_kwargs = {
-                'runtime_env' : {
-                    'working_dir': './',
-                    'excludes' : ["/.git/"],
-                    'env_vars': {
-                        'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
-                        'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
-                        'TOKENIZERS_PARALLELISM': 'true',
-                        'NCCL_DEBUG': 'WARN',
-                        'VLLM_LOGGING_LEVEL': 'WARN'
-                    }
-                }
-            }
+            ray_init_kwargs['address'] = ray_address
         if ray_temp_dir:
             ray_init_kwargs['_temp_dir'] = ray_temp_dir
 
