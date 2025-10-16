@@ -41,7 +41,12 @@ unset __conda_setup
 # Activate your environment
 conda activate verl
 
-CHECKPOINT_DIR="/u/rfechner/out/default/qwen2.5_1.5b"
+# logging into huggingface
+python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
+
+echo "Logged into huggingface"
+
+CHECKPOINT_DIR="/u/rfechner/out/default/llama3.2_1b"
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="/u/rfechner/data/math/train.parquet" \
@@ -52,7 +57,7 @@ python -u -m verl.trainer.main_ppo \
     data.truncation=left \
     actor_rollout_ref.model.use_remove_padding=true \
     actor_rollout_ref.model.use_fused_kernels=true \
-    actor_rollout_ref.model.path="Qwen/Qwen2.5-1.5B" \
+    actor_rollout_ref.model.path="meta-llama/Llama-3.2-1B-Instruct" \
     actor_rollout_ref.model.enable_gradient_checkpointing=true \
     actor_rollout_ref.model.enable_activation_offload=true \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=$((1 * (1024 + 3072))) \
@@ -77,7 +82,7 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.strategy="fsdp2" \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$((1 * (1024 + 3072))) \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.enable_chunked_prefill=true \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((6 * (1024 + 3072))) \
@@ -90,17 +95,17 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.7 \
     actor_rollout_ref.rollout.val_kwargs.top_k=-1 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=true \
-    actor_rollout_ref.rollout.val_kwargs.n=64 \
+    actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.parquet" \
+    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.jsonl" \
     +trainer.compute_logprob_batch_size=8 \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.project_name="default" \
     trainer.logger=console \
-    trainer.val_before_train=true \
-    trainer.n_gpus_per_node=4 \
+    trainer.val_before_train=false \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=1 \

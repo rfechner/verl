@@ -88,6 +88,7 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
+        log_prob_flag=False
     ):
         if not isinstance(data_files, list | ListConfig):
             data_files = [data_files]
@@ -103,6 +104,7 @@ class RLHFDataset(Dataset):
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
         self.max_prompt_length = config.get("max_prompt_length", 1024)
+        self.max_response_length = config.get("max_response_length", 3072) # only used in case log_prob_flag=True
         self.return_raw_chat = config.get("return_raw_chat", False)
         self.return_full_prompt = config.get("return_full_prompt", False)
         self.truncation = config.get("truncation", "error")
@@ -117,6 +119,7 @@ class RLHFDataset(Dataset):
         self.filter_prompts = config.get("filter_prompts", True)
         self.serialize_dataset = False
         self.return_multi_modal_inputs = config.get("return_multi_modal_inputs", True)
+        self.log_prob_flag = log_prob_flag
 
         self._download()
         self._read_files_and_tokenize()
@@ -132,7 +135,11 @@ class RLHFDataset(Dataset):
         dataframes = []
         for parquet_file in self.data_files:
             # read parquet files and cache
-            dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
+            if self.log_prob_flag:
+                dataframe = datasets.load_dataset("json", data_files=parquet_file)["train"] # logprob are stored as jsonl for fast iteration.
+            else:
+                dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
+                
             dataframes.append(dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 
@@ -199,7 +206,7 @@ class RLHFDataset(Dataset):
 
     def __len__(self):
         return len(self.dataframe)
-
+    
     def _build_messages(self, example: dict):
         messages: list = example.pop(self.prompt_key)
 
@@ -228,6 +235,55 @@ class RLHFDataset(Dataset):
         row_dict: dict = self.dataframe[item]
         messages = self._build_messages(row_dict)
         model_inputs = {}
+        
+        if self.log_prob_flag: # early exit for custom behaviour.
+            """
+                Need:
+                    - full message, padded left for prompt, padded right for response
+                    - full attention mask
+                    - full position ids
+                    - separate response_mask -> take that from max response length.
+            """
+            prompt, response = messages
+            raw_prompt = self.tokenizer.apply_chat_template([prompt], tokenize=False, add_generation_prompt=True, **self.apply_chat_template_kwargs)
+            prompt_tokenized = self.tokenizer(raw_prompt, return_tensors='pt', add_special_tokens=False)
+            response_tokenized = self.tokenizer(response['content'], return_tensors='pt', add_special_tokens=False)
+
+            prompt_input_ids = prompt_tokenized.pop("input_ids")
+            prompt_attention_mask = prompt_tokenized.pop("attention_mask")
+            response_input_ids = response_tokenized.pop('input_ids')
+            response_attention_mask = response_tokenized.pop('attention_mask')
+
+            prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
+                input_ids=prompt_input_ids,
+                attention_mask=prompt_attention_mask,
+                max_length=self.max_prompt_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                left_pad=True,
+                truncation=self.truncation,
+            )
+            response_input_ids, response_attention_mask = verl_F.postprocess_data(
+                input_ids=response_input_ids,
+                attention_mask=response_attention_mask,
+                max_length=self.max_response_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                left_pad=False,
+                truncation=self.truncation,
+            )
+
+            full_input_ids = torch.cat([prompt_input_ids, response_input_ids], dim=-1)
+            full_attention_mask = torch.cat([prompt_attention_mask, response_attention_mask], dim=-1)
+            full_position_ids = compute_position_id_with_mask(full_attention_mask)
+
+            return_dict = {
+                'input_ids' : full_input_ids.squeeze(),
+                'attention_mask' : full_attention_mask.squeeze(),
+                'position_ids' : full_position_ids.squeeze(),
+                'prompts' : prompt_input_ids.squeeze(),
+                'responses' : response_input_ids.squeeze(),
+                'response_mask' : response_attention_mask.squeeze()
+            }
+            return return_dict
 
         if self.processor is not None:
             from verl.utils.dataset.vision_utils import process_image, process_video
@@ -274,15 +330,17 @@ class RLHFDataset(Dataset):
                 # second_per_grid_ts isn't used for training, just for mrope
                 row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
 
-        else:
+        else: # processor is None
             if self.apply_chat_template_kwargs.get("chat_template") is None:
                 assert hasattr(self.tokenizer, "chat_template"), (
                     "chat_template should be provided in apply_chat_template_kwargs or tokenizer config, "
                     "models like GLM can copy chat_template.jinja from instruct models"
                 )
+            
             raw_prompt = self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True, tokenize=False, **self.apply_chat_template_kwargs
             )
+            
             model_inputs = self.tokenizer(raw_prompt, return_tensors="pt", add_special_tokens=False)
             input_ids = model_inputs.pop("input_ids")
             attention_mask = model_inputs.pop("attention_mask")
@@ -352,6 +410,10 @@ class RLHFDataset(Dataset):
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         row_dict["interaction_kwargs"] = interaction_kwargs
+
+        # for logprob generation:
+        #   - separate prompt and response
+        #   - set response attention mask
         return row_dict
 
     def __getstate__(self):

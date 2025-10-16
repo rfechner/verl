@@ -1,3 +1,0 @@
-{"input": "What is 2 + 2?", "output": "4", "uid": "test-1"}
-{"input": "Translate to French: 'hello'", "output": "bonjour", "uid": "test-2"}
-{"input": "List first three primes.", "output": "2, 3, 5", "uid": "test-3"}

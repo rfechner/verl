@@ -496,7 +496,6 @@ class DataProto:
                 non_tensors[key] = val
             else:
                 raise ValueError(f"Unsupported type in data {type(val)}")
-
         return cls.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info=meta_info, auto_padding=auto_padding)
 
     @classmethod
@@ -830,6 +829,14 @@ class DataProto:
     def chunk(self, chunks: int) -> list["DataProto"]:
         """Split the batch among dim=0 into chunks. The meta_info is passed to each DataProto after split.
 
+        Current Issue:
+            this function is called on a mock dataProto with size 3 < chunks = 8. Somewhere the chunk variable is just
+            hardcoded. either i should try to just make the dataproto size divisible by 8 from the start, or
+            rewrite this code. This seems very fundamental code however, I wouldn't wanna touch it.
+
+            -> increase the data size to 8 instead of 3.
+            -> run and see what happens
+            -> whats the uid of the meta info used for anyways? should i even add it?            
         Args:
             chunks (int): the number of chunks to split on dim=0
 

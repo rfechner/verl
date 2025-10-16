@@ -25,13 +25,13 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pprint import pprint
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import numpy as np
 import ray
 import torch
 from omegaconf import OmegaConf, open_dict
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import Dataset, Sampler, DataLoader
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
@@ -387,6 +387,32 @@ class RayPPOTrainer:
             collate_fn=collate_fn,
         )
 
+        # new: if we want to calculate logprobs for pre-computed chats, we have to create a third dataset to iterate over.
+        if self.config.trainer.compute_logprob_from_file:
+            from verl.utils.dataset.rl_dataset import RLHFDataset
+
+            logprob_dataset = RLHFDataset(
+                data_files=self.config.trainer.compute_logprob_from_file,
+                tokenizer=self.tokenizer,
+                config=self.config.data,
+                log_prob_flag=True
+            )
+
+            self.logprob_dataloader = DataLoader(
+                dataset=logprob_dataset,
+                batch_size=self.config.trainer.get("compute_logprob_batch_size", 64),
+                num_workers=num_workers,
+                shuffle=False,
+                drop_last=False,
+                collate_fn=collate_fn
+            )
+            # for batch in self.logprob_dataloader:
+            #     b = DataProto.from_single_dict(batch)
+            #     b.save_to_disk('/u/rfechner/verl/sample.pt')
+            #     raise ValueError('Fin')
+            assert len(self.logprob_dataloader) >= 1, "Logprob dataloader is empty!" 
+            print("Size of logprob dataloader: ", len(self.logprob_dataloader))
+            
         assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
         assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
 
@@ -440,6 +466,28 @@ class RayPPOTrainer:
             f.write("\n".join(lines) + "\n")
 
         print(f"Dumped generations to {filename}")
+
+    def compute_chat_logprobs(self) -> list[dict]:
+        """
+            Computes log-probs for fixed chats.
+        """
+        lines = []
+
+        for i, batch_dict in enumerate(self.logprob_dataloader):
+            data: DataProto = DataProto.from_single_dict(batch_dict)
+            with torch.no_grad(): # not necessary, as compute_log_prob doesn't accumulate grads, but lets be sure.
+                out = self.actor_rollout_wg.compute_log_prob(data)
+            logprobs, entropys = out.batch['old_log_probs'], out.batch['entropys']
+            rmpad_logprobs = [
+                lp[mask.bool()].cpu().tolist() for lp, mask in zip(logprobs, data.batch['response_mask'], strict=True)
+            ]
+            rmpad_entropy = [
+                ent[mask.bool()].cpu().tolist() for ent, mask in zip(entropys, data.batch['response_mask'], strict=True)
+            ]
+            entry = {"batch_index" : i, "logprobs": rmpad_logprobs, 'entropy' : rmpad_entropy}
+            lines.append(json.dumps(entry, ensure_ascii=False))
+
+        return lines
 
     def _log_rollout_data(
         self, batch: DataProto, reward_extra_infos_dict: dict, timing_raw: dict, rollout_data_dir: str
@@ -514,7 +562,29 @@ class RayPPOTrainer:
 
         return gen_batch
 
+    def _maybe_dump_logprobs_for_precomputed_chats(self):
+        compute_file = self.config.trainer.get("compute_logprob_from_file", None)
+        val_data_dir_cfg = self.config.trainer.get("validation_data_dir", None)
+
+        if compute_file:
+            out_path = None
+            if val_data_dir_cfg:
+                os.makedirs(val_data_dir_cfg, exist_ok=True)
+                out_path = os.path.join(val_data_dir_cfg, f"{self.global_steps}_precomp.jsonl")
+            else:
+                out_path = os.path.join(self.config.trainer.default_local_dir, f"{self.global_steps}_precomp.jsonl")
+
+            lines = self.compute_chat_logprobs()
+            with open(out_path, "w") as fo:
+                fo.write("\n".join(lines) + "\n")
+            print(f"Wrote precomputed logprobs to {out_path}")
+
     def _validate(self):
+        print('[VALIDATION] Begin')
+        print("[VALIDATION] Precomputed Logprobs")
+        self._maybe_dump_logprobs_for_precomputed_chats()
+
+        print("[VALIDATION] validation rollouts")
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -526,7 +596,8 @@ class RayPPOTrainer:
         sample_turns = []
         sample_uids = []
 
-        for test_data in self.val_dataloader:
+        for i, test_data in enumerate(self.val_dataloader):
+            print(f'[VALIDATION] Val batch [{i + 1} / {len(self.val_dataloader)}]')
             test_batch = DataProto.from_single_dict(test_data)
 
             if "uid" not in test_batch.non_tensor_batch:
@@ -573,6 +644,9 @@ class RayPPOTrainer:
                 else self.config.actor_rollout_ref.rollout.agent.num_workers
             )
             test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
+            print("VALIDATION: Stats")
+            test_gen_batch_padded.print_size()
+
             if not self.async_rollout_mode:
                 test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
             else:
@@ -611,96 +685,6 @@ class RayPPOTrainer:
                 sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
-
-        # --- New: compute log-probs for a precomputed file if provided ---
-        compute_file = self.config.trainer.get("compute_logprob_from_file", None)
-        compute_batch_size = self.config.trainer.get("compute_logprob_batch_size", 64)
-        val_data_dir_cfg = self.config.trainer.get("validation_data_dir", None)
-
-        if compute_file is not None and compute_file != '':
-            # Expect JSONL with keys: input, output
-            import json
-
-            out_path = None
-            if val_data_dir_cfg:
-                os.makedirs(val_data_dir_cfg, exist_ok=True)
-                out_path = os.path.join(val_data_dir_cfg, f"{self.global_steps}_precomp.jsonl")
-            else:
-                out_path = os.path.join(self.config.trainer.default_local_dir, f"{self.global_steps}_precomp.jsonl")
-
-            lines_out = []
-            batch_inputs = []
-            batch_outputs = []
-            batch_uids = []
-
-            def flush_logprob_batch():
-                if len(batch_inputs) == 0:
-                    return
-                # tokenize and build DataProto
-                enc_inputs = self.tokenizer(batch_inputs, return_tensors="pt", padding=True)
-                enc_outputs = self.tokenizer(batch_outputs, return_tensors="pt", padding=True)
-
-                # build concatenated input_ids = prompt + response
-                input_ids = torch.cat([enc_inputs.input_ids, enc_outputs.input_ids[:, 1:]], dim=1)
-                attention_mask = torch.cat([enc_inputs.attention_mask, enc_outputs.attention_mask[:, 1:]], dim=1)
-                # position ids simple arange
-                seq_len = input_ids.shape[1]
-                position_ids = torch.arange(seq_len).unsqueeze(0).expand(input_ids.shape[0], -1)
-
-                # responses should be the response token ids (without BOS)
-                responses = enc_outputs.input_ids[:, 1:]
-
-                meta = {
-                    "micro_batch_size": min(compute_batch_size, input_ids.shape[0]),
-                    "temperature": 1.0,
-                    "use_dynamic_bsz": False,
-                }
-
-                tensors = {
-                    "input_ids": input_ids,
-                    "attention_mask": attention_mask,
-                    "position_ids": position_ids,
-                    "responses": responses,
-                }
-                non_tensors = {"uid": np.array(batch_uids, dtype=object)}
-                dp = DataProto.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info=meta)
-
-                # call actor worker group to compute log-probs
-                lp, ent = self.actor_rollout_wg.compute_log_prob(dp, calculate_entropy=False)
-
-                # lp: (B, resp_len)
-                lp_sum = lp.sum(-1).cpu().tolist()
-                lp_tokens = [row.cpu().tolist() for row in lp]
-
-                for uid, inp, outp, tot_lp, toks in zip(batch_uids, batch_inputs, batch_outputs, lp_sum, lp_tokens):
-                    entry = {"uid": uid, "input": inp, "output": outp, "total_logprob": tot_lp, "token_logprob": toks, "step": self.global_steps}
-                    lines_out.append(json.dumps(entry, ensure_ascii=False))
-
-                # clear buffers
-                batch_inputs.clear()
-                batch_outputs.clear()
-                batch_uids.clear()
-
-            # stream the input file
-            with open(compute_file, "r") as f:
-                for line in f:
-                    data = json.loads(line)
-                    inp = data.get("input") or data.get("prompt")
-                    outp = data.get("output") or data.get("response")
-                    uid = data.get("uid", str(uuid.uuid4()))
-                    batch_inputs.append(inp)
-                    batch_outputs.append(outp)
-                    batch_uids.append(uid)
-                    if len(batch_inputs) >= compute_batch_size:
-                        flush_logprob_batch()
-                # flush remaining
-                flush_logprob_batch()
-
-            # write out
-            if out_path is not None:
-                with open(out_path, "w") as fo:
-                    fo.write("\n".join(lines_out) + "\n")
-                print(f"Wrote precomputed logprobs to {out_path}")
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
@@ -1071,6 +1055,7 @@ class RayPPOTrainer:
                         if self.config.global_profiler.profile_continuous_steps
                         else curr_step_profile
                     )
+                
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
                 # add uid to batch
@@ -1119,10 +1104,11 @@ class RayPPOTrainer:
                             batch.batch["reward_baselines"] = reward_baseline_tensor
 
                             del gen_baseline_batch, gen_baseline_output
+
                     # repeat to align with repeated responses in rollout
                     batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                     batch = batch.union(gen_batch_output)
-
+                    
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
                     # Balance the number of valid tokens across DP ranks.

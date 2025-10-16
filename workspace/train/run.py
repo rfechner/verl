@@ -33,22 +33,45 @@ def collect_export_vars(config: Dict[str, str]) -> List[str]:
         out.append(f"{k}={val}")
     return out
 
+models = {
+    'llama3-small' : "meta-llama/Llama-3.2-1B-Instruct",
+    'llama3-medium' : "meta-llama/Llama-3.2-3B-Instruct",
+    'llama3-large' : "meta-llama/Llama-3.1-8B-Instruct",
+    'qwen3-small' : "Qwen/Qwen3-0.6B",
+    'qwen3-medium' : "Qwen/Qwen3-4B",
+    'qwen3-large' : "Qwen/Qwen3-8B",
+    'moxin' : "moxin-org/Moxin-7B-Instruct",
+    'r1-qwen-medium' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+    'r1-qwen-large' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", 
+    'r1-llama-large' : "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+}
 
 def main():
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
-
     parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo"], help="Which training method to use")
-    parser.add_argument("--model", type=str, default='Qwen/Qwen2.5-1.5B', help="Path to model or model id")
+
+    # could be: meta-llama/Llama-3.2-1B-Instruct, moxin-org/Moxin-7B-Instruct
+    parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
     parser.add_argument("--project-name", default="default", help="Project name for checkpoint organization")
     parser.add_argument("--identifier", default=None, help="Optional identifier appended to run name")
     parser.add_argument("--train-file", default="/u/rfechner/data/math/train.parquet")
     parser.add_argument("--val-file", default="/u/rfechner/data/math500/test.parquet")
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
     parser.add_argument("--tp", type=int, default=4, help="Tensor model parallel size (tensor parallelism)")
-    parser.add_argument("--valn", type=int, default=64, help="Number of validation samples to dump per validation step.")
+    parser.add_argument("--valn", type=int, default=8, help="Number of validation samples to dump per validation step.")
     parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
+    parser.add_argument("--no-logprobs", action='store_true', default=False, help='flag: do not compute logprobs for pre-rollouts')
+    parser.add_argument("--no-rollouts", action='store_true', default=False, help='flag: do not calculate/dump rollouts.')
 
     args = parser.parse_args()
+
+    # resolve alias
+    if args.model in models:
+        args.model = models[args.model]
+    
+    from huggingface_hub import login
+    login(token=open("/u/rfechner/.cache/huggingface/token").read().strip())
+    print("Logged into huggingface hub.")
 
     # Validate paths
     train_file = validate_file(args.train_file)
@@ -73,6 +96,12 @@ def main():
 
     # base hyperparams. These are the variable and "important" parameters
     config = {
+        # Precomputed Q+A file for which to compute log-probs during validation
+        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/tmp.jsonl" if not args.no_logprobs else '',
+
+        # Where to dump validation generations (placed next to checkpoints by default)
+        "trainer_validation_data_dir": os.path.join("/u/rfechner/out", args.project_name, expname, "val_jsonl") if not args.no_rollouts else '',
+        
         "model_path": args.model,
         "train_files": train_file,
         "val_files": val_file,
@@ -100,10 +129,12 @@ def main():
         # algorithm and data
         "algorithm_adv_estimator": "grpo",
         "data_truncation": "left",
+        
         # actor model flags
         "actor_model_use_remove_padding": True,
         "actor_model_enable_gradient_checkpointing": True,
         "actor_model_enable_activation_offload": True,
+        
         # ref / rollout flags
         "ref_log_prob_use_dynamic_bsz": True,
         "ref_fsdp_param_offload": True,
@@ -111,6 +142,7 @@ def main():
         "ref_entropy_checkpointing": True,
         "ref_fsdp_forward_prefetch": True,
         "ref_strategy": "fsdp2",
+        
         # actor fsdp / dynamic flags
         "gpu_memory_utilization" : 0.8,
         "enable_chunked_prefill" : True,
@@ -121,18 +153,16 @@ def main():
         "actor_ulysses_sequence_parallel_size": 1,
         "actor_strategy": "fsdp2",
         "grad_clip" : 1.0,
+
         # rollout shared flags
         "rollout_log_prob_use_dynamic_bsz": True,
         "rollout_val_do_sample": True,
-        # where to dump validation generations (placed next to checkpoints by default)
-        "trainer_validation_data_dir": os.path.join("/u/rfechner/out", args.project_name, expname, "val_jsonl"),
-
-        # optional: precomputed Q+A file for which to compute log-probs during validation
-        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/precomputed_logprob_test.jsonl",
+        
         # batch size for computing log-probs on actor workers
-        "trainer_compute_logprob_batch_size": 64,
+        "trainer_compute_logprob_batch_size": 8,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
+
         # trainer shared flags
         "trainer_resume_mode": "auto",
         "trainer_logger": "console",

@@ -432,7 +432,6 @@ def create_rl_dataset(data_paths, data_config, tokenizer, processor, is_train=Tr
         processor=processor,
         config=data_config,
     )
-
     return dataset
 
 
