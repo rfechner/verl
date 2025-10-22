@@ -41,7 +41,7 @@ unset __conda_setup
 # Activate your environment
 conda activate verl
 
-CHECKPOINT_DIR="/u/rfechner/out/default/qwen2.5_1.5b"
+CHECKPOINT_DIR="/ptmp/rfechner/out/default/qwen3_4b"
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="/u/rfechner/data/math/train.parquet" \
@@ -52,7 +52,7 @@ python -u -m verl.trainer.main_ppo \
     data.truncation=left \
     actor_rollout_ref.model.use_remove_padding=true \
     actor_rollout_ref.model.use_fused_kernels=true \
-    actor_rollout_ref.model.path="Qwen/Qwen2.5-1.5B" \
+    actor_rollout_ref.model.path="Qwen/Qwen3-8B" \
     actor_rollout_ref.model.enable_gradient_checkpointing=true \
     actor_rollout_ref.model.enable_activation_offload=true \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=$((1 * (1024 + 3072))) \
@@ -90,10 +90,10 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.7 \
     actor_rollout_ref.rollout.val_kwargs.top_k=-1 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=true \
-    actor_rollout_ref.rollout.val_kwargs.n=64 \
+    actor_rollout_ref.rollout.val_kwargs.n=8 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.parquet" \
+    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.jsonl" \
     +trainer.compute_logprob_batch_size=8 \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \

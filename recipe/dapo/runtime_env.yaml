@@ -1,5 +1,7 @@
 working_dir: ./
 excludes: ["/.git/"]
 env_vars:
-  TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
-  VLLM_USE_V1: "1"
+  TORCH_DYNAMO_VERBOSE: "1"
+  TORCH_LOGS: "+dynamo"
+  # TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
+  # VLLM_USE_V1: "1"

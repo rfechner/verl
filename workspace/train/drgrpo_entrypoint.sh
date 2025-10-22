@@ -215,20 +215,22 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=${rollout_val_do_sample} \
     actor_rollout_ref.rollout.val_kwargs.n=${rollout_val_n} \
     actor_rollout_ref.rollout.disable_log_stats=${rollout_disable_log_stats} \
+    trainer.rollout_data_dir=$trainer_rollout_data_dir \
     +trainer.validation_data_dir=${trainer_validation_data_dir} \
     +trainer.compute_logprob_from_file=${trainer_compute_logprob_from_file} \
     +trainer.compute_logprob_batch_size=${trainer_compute_logprob_batch_size} \
     trainer.resume_mode=${trainer_resume_mode} \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \
-    trainer.logger=${trainer_logger} \
+    trainer.logger='["console", "file"]' \
     trainer.val_before_train=${trainer_val_before_train} \
     trainer.n_gpus_per_node=${trainer_n_gpus_per_node} \
     trainer.nnodes=${trainer_nnodes} \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
-    trainer.total_epochs=$total_epochs
+    trainer.total_epochs=$total_epochs \
+    trainer.experiment_name=$experiment_name
 
 echo "========================================================"
 echo "Training completed with exit code: $?"

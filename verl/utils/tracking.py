@@ -229,16 +229,17 @@ class FileLogger:
         self.filepath = os.getenv("VERL_FILE_LOGGER_PATH", None)
         if self.filepath is None:
             root_path = os.path.expanduser(os.getenv("VERL_FILE_LOGGER_ROOT", "."))
-            directory = os.path.join(root_path, self.project_name)
+            directory = os.path.join(root_path, self.project_name, self.experiment_name)
             os.makedirs(directory, exist_ok=True)
-            self.filepath = os.path.join(directory, f"{self.experiment_name}.jsonl")
+            self.filepath = os.path.join(directory, "logs.jsonl")
             print(f"Creating file logger at {self.filepath}")
         self.fp = open(self.filepath, "w")
 
     def log(self, data, step):
         data = {"step": step, "data": data}
         self.fp.write(json.dumps(data) + "\n")
-
+        self.fp.flush() # forces immediate write to file instead of buffering.
+        
     def finish(self):
         self.fp.close()
 

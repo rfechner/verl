@@ -40,6 +40,8 @@ DATASET_MAPPINGS = {
     'minervamath': 'math-ai/minervamath',
     'gpqa': 'math-ai/gpqa',
     'amc23': 'math-ai/amc23',
+    'dapo_math' : 'open-r1/DAPO-Math-17k-Processed',
+    'polaris53k' : "POLARIS-Project/Polaris-Dataset-53K",
     
     # GSM8K dataset
     'gsm8k': 'openai/gsm8k',

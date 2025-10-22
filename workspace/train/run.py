@@ -3,7 +3,8 @@
 import argparse
 import os
 import subprocess
-from typing import Dict, List
+from typing import Dict, List, Any
+import json
 
 """
     Main training run entrypoint. Currently supports GRPO, DAPO, and Dr. GRPO. The purpose of this script
@@ -21,15 +22,21 @@ def validate_file(path: str) -> str:
     return path
 
 
-def collect_export_vars(config: Dict[str, str]) -> List[str]:
+def collect_export_vars(config: Dict[str, Any]) -> List[str]:
     out: List[str] = []
     for k, v in config.items():
-        if v is None:
+        # Convert lists/dicts to JSON strings so Hydra can parse them
+        if isinstance(v, (list, dict)):
+            val = json.dumps(v)
+        elif v is None:
             val = ""
         else:
             val = str(v)
-        if "," in val or "\n" in val or " " in val:
-            val = f"'{val}'"
+        
+        # Quote values containing special characters or spaces
+        if any(c in val for c in [",", "\n", " "]):
+            raise ValueError("Please try to not pass values containing special characters ',', '\\n', ' '")
+        
         out.append(f"{k}={val}")
     return out
 
@@ -48,7 +55,7 @@ models = {
 
 def main():
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
-    parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo"], help="Which training method to use")
+    parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo", "gspo"], help="Which training method to use")
 
     # could be: meta-llama/Llama-3.2-1B-Instruct, moxin-org/Moxin-7B-Instruct
     parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
@@ -80,11 +87,13 @@ def main():
     # Build experiment name (snake_case consistency: lowercase with underscores)
     base_model_name = os.path.basename(args.model).lower().replace("-", "_")
     if args.identifier:
-        expname = f"{args.identifier.lower()}__{base_model_name}"
+        expname = f"{args.identifier.lower()}__{base_model_name}__{args.method}"
     else:
-        expname = base_model_name
+        expname = f"{base_model_name}__{args.method}"
 
-    checkpoint_dir = os.path.join("/u/rfechner/out", args.project_name, expname)
+    # temporary files in raven cluster. Warning: files not accessed for ~12 weeks are deleted.
+    logger_root="/ptmp/rfechner/out"
+    checkpoint_dir = os.path.join(logger_root, args.project_name, expname)
 
     # Check checkpoint existence guard
     if os.path.isdir(checkpoint_dir) and not args.cont:
@@ -93,20 +102,24 @@ def main():
     # Decide entrypoint script
     this_dir = os.path.dirname(os.path.abspath(__file__))
     entrypoint_script = os.path.join(this_dir, f"{args.method}_entrypoint.sh")
-
+    
     # base hyperparams. These are the variable and "important" parameters
     config = {
         # Precomputed Q+A file for which to compute log-probs during validation
         "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/tmp.jsonl" if not args.no_logprobs else '',
 
         # Where to dump validation generations (placed next to checkpoints by default)
-        "trainer_validation_data_dir": os.path.join("/u/rfechner/out", args.project_name, expname, "val_jsonl") if not args.no_rollouts else '',
+        "trainer_validation_data_dir": os.path.join("/ptmp/rfechner/out", args.project_name, expname, "val_jsonl") if not args.no_rollouts else '',
+        
+        # Where to dump rollout generations (placed next to checkpoints by default)
+        "trainer_rollout_data_dir" : os.path.join("/ptmp/rfechner/out", args.project_name, expname, "rollout_jsonl") if not args.no_rollouts else '',
         
         "model_path": args.model,
         "train_files": train_file,
         "val_files": val_file,
-        "project_name": args.project_name,
         "identifier": args.identifier or "",
+        "project_name": args.project_name,
+        "experiment_name" : expname,
         "checkpoint_dir": checkpoint_dir,
         "tensor_model_parallel_size": args.tp,
         "rollout_val_n" : args.valn,
@@ -126,6 +139,8 @@ def main():
 
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({
+        # Environement flags
+        'VERL_FILE_LOGGER_ROOT' : logger_root,
         # algorithm and data
         "algorithm_adv_estimator": "grpo",
         "data_truncation": "left",
@@ -162,10 +177,7 @@ def main():
         "trainer_compute_logprob_batch_size": 8,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
-
-        # trainer shared flags
         "trainer_resume_mode": "auto",
-        "trainer_logger": "console",
         "trainer_val_before_train": False,
         "trainer_n_gpus_per_node": 4,
         "trainer_nnodes": 2,

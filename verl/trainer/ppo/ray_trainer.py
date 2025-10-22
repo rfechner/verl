@@ -644,7 +644,6 @@ class RayPPOTrainer:
                 else self.config.actor_rollout_ref.rollout.agent.num_workers
             )
             test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
-            print("VALIDATION: Stats")
             test_gen_batch_padded.print_size()
 
             if not self.async_rollout_mode:

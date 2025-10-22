@@ -45,8 +45,8 @@ conda activate verl
 python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
 
 echo "Logged into huggingface"
-
-CHECKPOINT_DIR="/u/rfechner/out/default/llama3.2_1b"
+CHECKPOINT_DIR="/ptmp/rfechner/out/default/test"
+export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files="/u/rfechner/data/math/train.parquet" \
@@ -103,11 +103,12 @@ python -u -m verl.trainer.main_ppo \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.project_name="default" \
-    trainer.logger=console \
-    trainer.val_before_train=false \
+    trainer.logger='["console", "file"]' \
+    trainer.val_before_train=true \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=1 \
     +trainer.remove_previous_ckpt_in_save=false \
-    trainer.total_epochs=10
+    trainer.total_epochs=10 \
+    trainer.experiment_name="test"
