@@ -238,21 +238,35 @@ class RLHFDataset(Dataset):
         
         if self.log_prob_flag: # early exit for custom behaviour.
             """
-                Need:
-                    - full message, padded left for prompt, padded right for response
-                    - full attention mask
-                    - full position ids
-                    - separate response_mask -> take that from max response length.
+                prompt "Whats 2+2?"
+                reponse: "THe answer is of course"
+                suffix: "4"
+
+                we want full prompt to be:
+                    "\n\nsystem...Whats 2+2? Lets think ...\nassistant:\nThe answer is of course 4"
+                
+                and a response mask:
+                    padding - prompt - instruction following - reponse - suffix - padding
+                    0           0           0                   0           1       0
+
+                
             """
+            suffix = row_dict.pop('suffix')
+            instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
+
+            # build in-distribution chat
             prompt, response = messages
-            raw_prompt = self.tokenizer.apply_chat_template([prompt], tokenize=False, add_generation_prompt=True, **self.apply_chat_template_kwargs)
+            prompt['content'] += " " + instruction_following
+
+            raw_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_special_tokens=False)
+            raw_prompt = raw_prompt[:raw_prompt.rindex(self.tokenizer.eos_token)] # remove everything after (including) eos token            
             prompt_tokenized = self.tokenizer(raw_prompt, return_tensors='pt', add_special_tokens=False)
-            response_tokenized = self.tokenizer(response['content'], return_tensors='pt', add_special_tokens=False)
+            suffix_tokens = self.tokenizer(suffix, return_tensors='pt', add_special_tokens=False)
 
             prompt_input_ids = prompt_tokenized.pop("input_ids")
             prompt_attention_mask = prompt_tokenized.pop("attention_mask")
-            response_input_ids = response_tokenized.pop('input_ids')
-            response_attention_mask = response_tokenized.pop('attention_mask')
+            suffix_input_ids = suffix_tokens.pop('input_ids')
+            suffix_attention_mask = suffix_tokens.pop('attention_mask')
 
             prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
                 input_ids=prompt_input_ids,
@@ -262,17 +276,17 @@ class RLHFDataset(Dataset):
                 left_pad=True,
                 truncation=self.truncation,
             )
-            response_input_ids, response_attention_mask = verl_F.postprocess_data(
-                input_ids=response_input_ids,
-                attention_mask=response_attention_mask,
+            suffix_input_ids, suffix_attention_mask = verl_F.postprocess_data(
+                input_ids=suffix_input_ids,
+                attention_mask=suffix_attention_mask,
                 max_length=self.max_response_length,
                 pad_token_id=self.tokenizer.pad_token_id,
                 left_pad=False,
                 truncation=self.truncation,
             )
 
-            full_input_ids = torch.cat([prompt_input_ids, response_input_ids], dim=-1)
-            full_attention_mask = torch.cat([prompt_attention_mask, response_attention_mask], dim=-1)
+            full_input_ids = torch.cat([prompt_input_ids, suffix_input_ids], dim=-1)
+            full_attention_mask = torch.cat([prompt_attention_mask, suffix_attention_mask], dim=-1)
             full_position_ids = compute_position_id_with_mask(full_attention_mask)
 
             return_dict = {
@@ -280,8 +294,8 @@ class RLHFDataset(Dataset):
                 'attention_mask' : full_attention_mask.squeeze(),
                 'position_ids' : full_position_ids.squeeze(),
                 'prompts' : prompt_input_ids.squeeze(),
-                'responses' : response_input_ids.squeeze(),
-                'response_mask' : response_attention_mask.squeeze()
+                'responses' : suffix_input_ids.squeeze(),
+                'response_mask' : suffix_attention_mask.squeeze()
             }
             return return_dict
 

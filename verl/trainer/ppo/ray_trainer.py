@@ -580,7 +580,6 @@ class RayPPOTrainer:
             print(f"Wrote precomputed logprobs to {out_path}")
 
     def _validate(self):
-        print('[VALIDATION] Begin')
         print("[VALIDATION] Precomputed Logprobs")
         self._maybe_dump_logprobs_for_precomputed_chats()
 

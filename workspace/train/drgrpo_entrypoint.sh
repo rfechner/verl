@@ -46,7 +46,6 @@ echo "  Identifier: $identifier"
 echo "  Model: $model_path"
 echo "  Project name: $project_name"
 echo "  Train files: $train_files"
-echo "  Val files: $val_files"
 echo "========================================================"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +153,15 @@ sleep 15
 # 3) Start Training
 # Used most tips from: https://verl.readthedocs.io/en/latest/perf/perf_tuning.html
 # ─────────────────────────────────────────────────────────────────────────────
+
+# i have to do it this way, as exporting via python + hydra parsing is horrible.
+math500=/u/rfechner/data/math500/test.parquet
+aime25=/u/rfechner/data/aime25/test.parquet
+brumo2025=/u/rfechner/data/brumo_2025/test.parquet
+cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
+hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
+val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
+
 
 # [Understanding R1-Zero-Like Training: A Critical Perspective](https://arxiv.org/pdf/2503.20783) claims there's optimization bias in GRPO, which leads to artificially longer responses, especially for incorrect outputs. This inefficiency stems from the way GRPO calculates advantages using group-based reward normalization. Instead, DrGRPO aggregates token-level losses by normalizing with a global constant to eliminate length bias.
 

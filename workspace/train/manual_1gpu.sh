@@ -105,8 +105,8 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.jsonl" \
-    +trainer.compute_logprob_batch_size=8 \
+    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
+    +trainer.compute_logprob_batch_size=2 \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.project_name="default" \

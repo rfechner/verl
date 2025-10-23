@@ -50,19 +50,10 @@ models = {
 def main():
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
     parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo", "gspo"], help="Which training method to use")
-
-    math500 = '/u/rfechner/data/math500/test.parquet'
-    aime25 = '/u/rfechner/data/aime25/test.parquet'
-    brumo2025 = '/u/rfechner/data/brumo_2025/test.parquet'
-    cmimc2025 = '/u/rfechner/data/cmimc_2025/test.parquet'
-    hmmt2025 = '/u/rfechner/data/hmmt_feb_2025/test.parquet'
-
-    # could be: meta-llama/Llama-3.2-1B-Instruct, moxin-org/Moxin-7B-Instruct
     parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
     parser.add_argument("--project-name", default="default", help="Project name for checkpoint organization")
     parser.add_argument("--identifier", default=None, help="Optional identifier appended to run name")
     parser.add_argument("--train-file", default="/u/rfechner/data/dapo17k/train.parquet")
-    parser.add_argument("--val-file", default=f"['{math500}', '{aime25}', '{brumo2025}', '{cmimc2025}', '{hmmt2025}']")
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
     parser.add_argument("--tp", type=int, default=4, help="Tensor model parallel size (tensor parallelism)")
     parser.add_argument("--valn", type=int, default=8, help="Number of validation samples to dump per validation step.")
@@ -105,7 +96,7 @@ def main():
     # base hyperparams. These are the variable and "important" parameters
     config = {
         # Precomputed Q+A file for which to compute log-probs during validation
-        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/tmp.jsonl" if not args.no_logprobs else '',
+        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/chats.jsonl" if not args.no_logprobs else '',
 
         # Where to dump validation generations (placed next to checkpoints by default)
         "trainer_validation_data_dir": os.path.join("/ptmp/rfechner/out", args.project_name, expname, "val_jsonl") if not args.no_rollouts else '',
@@ -115,7 +106,6 @@ def main():
         
         "model_path": args.model,
         "train_files": args.train_file,
-        "val_files": args.val_file,
         "identifier": args.identifier or "",
         "project_name": args.project_name,
         "experiment_name" : expname,
@@ -173,7 +163,7 @@ def main():
         "rollout_val_do_sample": True,
         
         # batch size for computing log-probs on actor workers
-        "trainer_compute_logprob_batch_size": 8,
+        "trainer_compute_logprob_batch_size": 2,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
         "trainer_resume_mode": "auto",
