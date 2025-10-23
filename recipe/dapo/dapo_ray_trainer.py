@@ -27,7 +27,7 @@ import torch
 from tqdm import tqdm
 
 from verl import DataProto
-from verl.trainer.ppo.core_algos import agg_loss
+from verl.trainer.ppo.core_algos import agg_loss, agg_entropy
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
@@ -287,7 +287,17 @@ class RayDAPOTrainer(RayPPOTrainer):
                         entropys = old_log_prob.batch["entropys"]
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
-                        entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                        """
+                        NOTE: changed from
+                            entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)    
+
+                            to
+                            entropy_agg = agg_entropy(mat=entropys, mask=response_masks).
+
+                            As we're not scaling loss, but entropy which shouldn't be conditioned on the mode of
+                            loss aggregation.     
+                        """
+                        entropy_agg = agg_entropy(mat=entropys, mask=response_masks)
                         old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
                         metrics.update(old_log_prob_metrics)
                         old_log_prob.batch.pop("entropys")
