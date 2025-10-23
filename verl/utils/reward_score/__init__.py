@@ -44,7 +44,11 @@ def default_compute_score(
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500", "math-ai/math500"]:
+
+    # weird interaction: When evaluating on more than one of these if branches, we're encountering error. math_reward.compuite_score and
+    # math_dapo.compute_score return different types.
+    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500", "math-ai/math500", "math-ai/aime25"] \
+        or data_source.startswith("MathArena"):
         from . import math_reward
 
         res = math_reward.compute_score(solution_str, ground_truth)

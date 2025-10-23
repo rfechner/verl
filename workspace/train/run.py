@@ -15,12 +15,6 @@ import json
     There are some parameters which are only set INSIDE the shell scripts, such that we can, but musn't use every exported parameter. Additionally,
     there are some non-standart parameters which we have to set for some algorithms, it's better to hardcode these.
 """
-def validate_file(path: str) -> str:
-    path = os.path.abspath(path)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"File not found: {path}")
-    return path
-
 
 def collect_export_vars(config: Dict[str, Any]) -> List[str]:
     out: List[str] = []
@@ -33,9 +27,9 @@ def collect_export_vars(config: Dict[str, Any]) -> List[str]:
         else:
             val = str(v)
         
-        # Quote values containing special characters or spaces
-        if any(c in val for c in [",", "\n", " "]):
-            raise ValueError("Please try to not pass values containing special characters ',', '\\n', ' '")
+        # # Quote values containing special characters or spaces
+        # if any(c in val for c in [",", "\n", " "]):
+        #     raise ValueError("Please try to not pass values containing special characters ',', '\\n', ' '")
         
         out.append(f"{k}={val}")
     return out
@@ -57,18 +51,27 @@ def main():
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
     parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo", "gspo"], help="Which training method to use")
 
+    math500 = '/u/rfechner/data/math500/test.parquet'
+    aime25 = '/u/rfechner/data/aime25/test.parquet'
+    brumo2025 = '/u/rfechner/data/brumo_2025/test.parquet'
+    cmimc2025 = '/u/rfechner/data/cmimc_2025/test.parquet'
+    hmmt2025 = '/u/rfechner/data/hmmt_feb_2025/test.parquet'
+
     # could be: meta-llama/Llama-3.2-1B-Instruct, moxin-org/Moxin-7B-Instruct
     parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
     parser.add_argument("--project-name", default="default", help="Project name for checkpoint organization")
     parser.add_argument("--identifier", default=None, help="Optional identifier appended to run name")
-    parser.add_argument("--train-file", default="/u/rfechner/data/math/train.parquet")
-    parser.add_argument("--val-file", default="/u/rfechner/data/math500/test.parquet")
+    parser.add_argument("--train-file", default="/u/rfechner/data/dapo17k/train.parquet")
+    parser.add_argument("--val-file", default=f"['{math500}', '{aime25}', '{brumo2025}', '{cmimc2025}', '{hmmt2025}']")
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
     parser.add_argument("--tp", type=int, default=4, help="Tensor model parallel size (tensor parallelism)")
     parser.add_argument("--valn", type=int, default=8, help="Number of validation samples to dump per validation step.")
     parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
     parser.add_argument("--no-logprobs", action='store_true', default=False, help='flag: do not compute logprobs for pre-rollouts')
     parser.add_argument("--no-rollouts", action='store_true', default=False, help='flag: do not calculate/dump rollouts.')
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--savefreq", type=int, default=10)
+    parser.add_argument("--testfreq", type=int, default=5)
 
     args = parser.parse_args()
 
@@ -79,10 +82,6 @@ def main():
     from huggingface_hub import login
     login(token=open("/u/rfechner/.cache/huggingface/token").read().strip())
     print("Logged into huggingface hub.")
-
-    # Validate paths
-    train_file = validate_file(args.train_file)
-    val_file = validate_file(args.val_file)
 
     # Build experiment name (snake_case consistency: lowercase with underscores)
     base_model_name = os.path.basename(args.model).lower().replace("-", "_")
@@ -115,8 +114,8 @@ def main():
         "trainer_rollout_data_dir" : os.path.join("/ptmp/rfechner/out", args.project_name, expname, "rollout_jsonl") if not args.no_rollouts else '',
         
         "model_path": args.model,
-        "train_files": train_file,
-        "val_files": val_file,
+        "train_files": args.train_file,
+        "val_files": args.val_file,
         "identifier": args.identifier or "",
         "project_name": args.project_name,
         "experiment_name" : expname,
@@ -124,12 +123,12 @@ def main():
         "tensor_model_parallel_size": args.tp,
         "rollout_val_n" : args.valn,
         "train_batch_size": 512,
-        "total_epochs": 10,
+        "total_epochs": args.epochs,
         "max_prompt_length": 1024,
         "max_response_length": 3 * 1024,
         "learning_rate" : 0.000001, # 1e-6
-        "save_freq" : 10,
-        "test_freq" : 5,
+        "save_freq" : args.savefreq,
+        "test_freq" : args.testfreq,
         "group_n" : 8,
         "temperature" : 1.0, # training temperature == val temperature
         "top_k" : -1, # vllm rollouts

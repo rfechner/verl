@@ -167,7 +167,7 @@ python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=${algorithm_adv_estimator} \
     algorithm.norm_adv_by_std_in_grpo=False \
     data.train_files="$train_files" \
-    data.val_files=$val_files \
+    data.val_files="$val_files" \
     data.train_batch_size=$train_batch_size \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \

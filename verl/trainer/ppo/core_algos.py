@@ -740,6 +740,8 @@ def compute_rewards(token_level_scores, old_log_prob, ref_log_prob, kl_ratio):
     return token_level_scores - kl * kl_ratio
 
 
+
+
 def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str):
     """
     Aggregate the loss matrix into a scalar.
@@ -775,6 +777,12 @@ def agg_loss(loss_mat: torch.Tensor, loss_mask: torch.Tensor, loss_agg_mode: str
 
     return loss
 
+def agg_entropy(mat: torch.Tensor, mask: torch.Tensor):
+    """
+        Aggregate the entropy matrix into a scalar. Entropy should always be
+        token-mean-sequence-mean for meaningful comparisons between algorithms.
+    """
+    return (torch.sum(mat * mask) / torch.sum(mask, dim=-1)).mean()
 
 @deprecated("verl.trainer.ppo.core_algos.compute_policy_loss_vanilla")
 def compute_policy_loss(

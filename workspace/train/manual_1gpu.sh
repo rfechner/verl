@@ -44,13 +44,20 @@ conda activate verl
 # logging into huggingface
 python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
 
+math500=/u/rfechner/data/math500/test.parquet
+aime25=/u/rfechner/data/aime25/test.parquet
+brumo2025=/u/rfechner/data/brumo_2025/test.parquet
+cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
+hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
+test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
+
 echo "Logged into huggingface"
-CHECKPOINT_DIR="/ptmp/rfechner/out/default/test"
+CHECKPOINT_DIR="/ptmp/rfechner/out/default/test2"
 export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files="/u/rfechner/data/math/train.parquet" \
-    data.val_files=/u/rfechner/data/math500/test.parquet \
+    data.train_files="/u/rfechner/data/dapo17k/train.parquet" \
+    data.val_files="$test_files" \
     data.train_batch_size=512 \
     data.max_prompt_length=1024 \
     data.max_response_length=3072 \

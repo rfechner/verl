@@ -20,15 +20,15 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--local_dir', default='~/data/aime25')
+    parser.add_argument('--local_dir', default='~/data/hmmt_feb_2025')
     parser.add_argument('--hdfs_dir', default=None)
 
     args = parser.parse_args()
-    data_source = 'math-ai/aime25'
+    data_source = 'MathArena/hmmt_feb_2025'
     print(f"Loading the {data_source} dataset from huggingface...", flush=True)
-    dataset = datasets.load_dataset(data_source, trust_remote_code=True)
+    dataset = datasets.load_dataset(data_source)
 
-    test_dataset = dataset['test']
+    test_dataset = dataset['train'] # called train, but is evaluation dataset.
     instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
 
     # add a row to each data item that represents a unique id
@@ -40,8 +40,8 @@ if __name__ == '__main__':
             question = question + ' ' + instruction_following
 
             answer = example.pop('answer')
-            _id = example.pop('id')
-            solution = answer
+            problem_type=example.pop('problem_type')
+            problem_idx=example.pop('problem_idx')
             data = {
                 "data_source": data_source,
                 "prompt": [{
@@ -51,12 +51,13 @@ if __name__ == '__main__':
                 "ability": "math",
                 "reward_model": {
                     "style": "rule",
-                    "ground_truth": solution
+                    "ground_truth": answer
                 },
                 "extra_info": {
+                    'problem_type' : problem_type,
                     'split': split,
                     'index': idx,
-                    'id' : _id
+                    'problem_idx' : problem_idx
                 }
             }
             return data
@@ -66,6 +67,7 @@ if __name__ == '__main__':
     test_dataset = test_dataset.map(function=make_map_fn('test'), 
                                     with_indices=True, 
                                     remove_columns=test_dataset.column_names)
+
     local_dir = args.local_dir
     hdfs_dir = args.hdfs_dir
 
