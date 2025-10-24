@@ -238,7 +238,13 @@ python -u -m verl.trainer.main_ppo \
     trainer.test_freq=$test_freq \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
     trainer.total_epochs=$total_epochs \
-    trainer.experiment_name=$experiment_name
+    trainer.experiment_name=$experiment_name \
+    reward_model.reward_manager=dapo \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=false \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.len=2048 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.log=false \
+    +reward_model.reward_kwargs.max_resp_len=3072
 
 echo "========================================================"
 echo "Training completed with exit code: $?"

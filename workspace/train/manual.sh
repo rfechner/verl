@@ -41,18 +41,30 @@ unset __conda_setup
 # Activate your environment
 conda activate verl
 
-CHECKPOINT_DIR="/ptmp/rfechner/out/default/qwen3_4b"
+# logging into huggingface
+python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
+
+math500=/u/rfechner/data/math500/test.parquet
+aime25=/u/rfechner/data/aime25/test.parquet
+brumo2025=/u/rfechner/data/brumo_2025/test.parquet
+cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
+hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
+test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
+
+echo "Logged into huggingface"
+CHECKPOINT_DIR="/ptmp/rfechner/out/default/test3"
+export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files="/u/rfechner/data/math/train.parquet" \
-    data.val_files=/u/rfechner/data/math500/test.parquet \
+    data.train_files="/u/rfechner/data/dapo17k/train.parquet" \
+    data.val_files="$test_files" \
     data.train_batch_size=512 \
     data.max_prompt_length=1024 \
     data.max_response_length=3072 \
     data.truncation=left \
     actor_rollout_ref.model.use_remove_padding=true \
     actor_rollout_ref.model.use_fused_kernels=true \
-    actor_rollout_ref.model.path="Qwen/Qwen3-8B" \
+    actor_rollout_ref.model.path="meta-llama/Llama-3.2-1B-Instruct" \
     actor_rollout_ref.model.enable_gradient_checkpointing=true \
     actor_rollout_ref.model.enable_activation_offload=true \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=$((1 * (1024 + 3072))) \
@@ -77,7 +89,7 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.strategy="fsdp2" \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$((1 * (1024 + 3072))) \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.enable_chunked_prefill=true \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((6 * (1024 + 3072))) \
@@ -90,19 +102,26 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.7 \
     actor_rollout_ref.rollout.val_kwargs.top_k=-1 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=true \
-    actor_rollout_ref.rollout.val_kwargs.n=8 \
+    actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/tmp.jsonl" \
+    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
     +trainer.compute_logprob_batch_size=8 \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.project_name="default" \
-    trainer.logger=console \
+    trainer.logger='["console", "file"]' \
     trainer.val_before_train=true \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=1 \
     +trainer.remove_previous_ckpt_in_save=false \
-    trainer.total_epochs=10
+    trainer.total_epochs=10 \
+    trainer.experiment_name="test" \
+    reward_model.reward_manager=dapo \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=false \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.len=2048 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.log=false \
+    +reward_model.reward_kwargs.max_resp_len=3072

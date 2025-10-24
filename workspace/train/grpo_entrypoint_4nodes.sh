@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=dapo
-#SBATCH --output=/u/rfechner/jobs/dapo_%j.out   # Standard output file (%j expands to job ID)
-#SBATCH --error=/u/rfechner/jobs/dapo_%j.err    # Standard error file (%j expands to job ID)
-#SBATCH --nodes=2
+#SBATCH --job-name=grpo
+#SBATCH --output=/u/rfechner/jobs/grpo_%j.out   # Standard output file (%j expands to job ID)
+#SBATCH --error=/u/rfechner/jobs/grpo_%j.err    # Standard error file (%j expands to job ID)
+#SBATCH --nodes=4
 #SBATCH --exclusive             
 #SBATCH --partition=general                                 # main partition containing GPU nodes
 #SBATCH --constraint=gpu-bw                                 # high bandwidth GPUs within general partition  
@@ -122,6 +122,9 @@ echo "RAY_ADDRESS: $RAY_ADDRESS"
 # Set number of GPUs using SLURM environment variable
 num_gpus=${SLURM_GPUS_PER_NODE:-4}  # Use SLURM detection, fallback to 4
 
+# NOTE: we have to "--export=ALL,ROCR_VISIBLE_DEVICES" to propagate set environment variables
+# and importantly the unset operation on ROCR_VISIBLE_DEVICES to the worker nodes, as verl requires
+# either ROCR_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES to be set.
 echo "Starting HEAD at $head_node"
 srun --export=ALL,ROCR_VISIBLE_DEVICES --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$port \
@@ -150,8 +153,6 @@ sleep 15
 # 3) Start Training
 # Used most tips from: https://verl.readthedocs.io/en/latest/perf/perf_tuning.html
 # ─────────────────────────────────────────────────────────────────────────────
-
-
 # i have to do it this way, as exporting via python + hydra parsing is horrible.
 math500=/u/rfechner/data/math500/test.parquet
 aime25=/u/rfechner/data/aime25/test.parquet
@@ -160,9 +161,7 @@ cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
-
-# delegates to the dapo trainer, which does the dynamic sampling.
-python -u -m recipe.dapo.main_dapo \
+python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=${algorithm_adv_estimator} \
     data.train_files="$train_files" \
     data.val_files="$val_files" \
@@ -185,17 +184,14 @@ python -u -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.actor.use_dynamic_bsz=${actor_use_dynamic_bsz} \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$((1 * (max_prompt_length + max_response_length))) \
-    actor_rollout_ref.actor.kl_loss_coef=0.0 \
-    actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.entropy_coeff=0.0 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.fsdp_config.forward_prefetch=${actor_fsdp_forward_prefetch} \
     actor_rollout_ref.actor.fsdp_config.param_offload=${actor_fsdp_param_offload} \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=${actor_fsdp_optimizer_offload} \
-    actor_rollout_ref.actor.clip_ratio_low=0.2 \
-    actor_rollout_ref.actor.clip_ratio_high=0.28 \
-    actor_rollout_ref.actor.clip_ratio_c=10.0 \
+    actor_rollout_ref.actor.clip_ratio=0.2 \
     actor_rollout_ref.actor.grad_clip=${grad_clip} \
-    actor_rollout_ref.actor.loss_agg_mode='token-mean' \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${actor_ulysses_sequence_parallel_size} \
     actor_rollout_ref.actor.strategy="${actor_strategy}" \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${rollout_log_prob_use_dynamic_bsz} \
@@ -219,26 +215,24 @@ python -u -m recipe.dapo.main_dapo \
     +trainer.validation_data_dir=${trainer_validation_data_dir} \
     +trainer.compute_logprob_from_file=${trainer_compute_logprob_from_file} \
     +trainer.compute_logprob_batch_size=${trainer_compute_logprob_batch_size} \
-    algorithm.use_kl_in_reward=False \
     trainer.resume_mode=${trainer_resume_mode} \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \
     trainer.logger='["console", "file"]' \
     trainer.val_before_train=${trainer_val_before_train} \
     trainer.n_gpus_per_node=${trainer_n_gpus_per_node} \
-    trainer.nnodes=${trainer_nnodes} \
+    trainer.nnodes=4 \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
     trainer.total_epochs=$total_epochs \
-    reward_model.reward_manager=${reward_model_reward_manager:-dapo} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=${reward_overlong_enable:-True} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.len=${reward_overlong_len:-2048} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=${reward_overlong_penalty:-1.0} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.log=${reward_overlong_log:-False} \
-    +reward_model.reward_kwargs.max_resp_len=${max_response_length} \
-    trainer.experiment_name=$experiment_name
-        
+    trainer.experiment_name=$experiment_name \
+    reward_model.reward_manager=dapo \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=false \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.len=2048 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0 \
+    +reward_model.reward_kwargs.overlong_buffer_cfg.log=false \
+    +reward_model.reward_kwargs.max_resp_len=3072
 
 echo "========================================================"
 echo "Training completed with exit code: $?"

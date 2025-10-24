@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
     parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo", "gspo"], help="Which training method to use")
     parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
-    parser.add_argument("--project-name", default="default", help="Project name for checkpoint organization")
+    parser.add_argument("--project-name", required=True, help="Project name for checkpoint organization")
     parser.add_argument("--identifier", default=None, help="Optional identifier appended to run name")
     parser.add_argument("--train-file", default="/u/rfechner/data/dapo17k/train.parquet")
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
@@ -63,6 +63,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--savefreq", type=int, default=10)
     parser.add_argument("--testfreq", type=int, default=5)
+    parser.add_argument("--nodes", type=int, default=2)
 
     args = parser.parse_args()
 
@@ -91,7 +92,10 @@ def main():
 
     # Decide entrypoint script
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    entrypoint_script = os.path.join(this_dir, f"{args.method}_entrypoint.sh")
+    entrypoint_script = os.path.join(this_dir, f"{args.method}_entrypoint{'_4nodes' if args.nodes==4 else ''}.sh")
+    
+    # TODO: could we instead of conditioning the script on the args.nodes make a pre-processor which goes in and
+    # replaces the SLURM nodes=x variable?
     
     # base hyperparams. These are the variable and "important" parameters
     config = {
@@ -163,7 +167,7 @@ def main():
         "rollout_val_do_sample": True,
         
         # batch size for computing log-probs on actor workers
-        "trainer_compute_logprob_batch_size": 2,
+        "trainer_compute_logprob_batch_size": 8,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
         "trainer_resume_mode": "auto",
