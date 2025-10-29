@@ -37,7 +37,6 @@ def collect_export_vars(config: Dict[str, Any]) -> List[str]:
 models = {
     'llama3-small' : "meta-llama/Llama-3.2-1B-Instruct",
     'llama3-medium' : "meta-llama/Llama-3.2-3B-Instruct",
-    'llama3-large' : "meta-llama/Llama-3.1-8B-Instruct",
     'qwen3-small' : "Qwen/Qwen3-0.6B",
     'qwen3-medium' : "Qwen/Qwen3-4B",
     'qwen3-large' : "Qwen/Qwen3-8B",
