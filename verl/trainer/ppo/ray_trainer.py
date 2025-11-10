@@ -257,6 +257,63 @@ def compute_advantage(
         data.batch["returns"] = returns
     return data
 
+def gtpo(batch, n, alpha=0.2, eps=1e-8):
+    """
+    Gradient-safe GTPO (token-level shaping).
+    """
+    entropys = batch["entropys"].detach()             # stop gradients
+    token_rewards = batch["token_level_rewards"].detach().clone()
+    token_scores = batch["token_level_scores"].detach()
+
+    num_groups = entropys.shape[0] // n
+    shaped = token_rewards.clone()
+
+    for g in range(num_groups):
+        start, end = g * n, (g + 1) * n
+        group_entropy = entropys[start:end].clamp(min=eps)
+        group_scores = token_scores[start:end]
+
+        # r_i: success indicator (0/1)
+        r_i = (group_scores.sum(dim=1) > 0).float().view(n, 1)
+
+        # Geometric mean normalization
+        H_geo = torch.exp(torch.log(group_entropy).mean(dim=1, keepdim=True))
+        entropy_weight = group_entropy / H_geo
+        token_bonus = alpha * entropy_weight * n
+
+        # Update rewards (pure numeric operation)
+        shaped[start:end] = r_i * (1.0 + token_bonus)
+
+    batch["token_level_rewards"] = shaped.detach()
+    return batch
+
+
+def grpo_s(batch, n, beta=0.2, eps=1e-8):
+    """
+    Gradient-safe GRPO-S (sequence-level shaping).
+    """
+    entropys = batch["entropys"].detach()
+    token_rewards = batch["token_level_rewards"].detach().clone()
+    token_scores = batch["token_level_scores"].detach()
+
+    num_groups = entropys.shape[0] // n
+    shaped = token_rewards.clone()
+
+    for g in range(num_groups):
+        start, end = g * n, (g + 1) * n
+        group_entropy = entropys[start:end].clamp(min=eps)
+        group_scores = token_scores[start:end]
+        r_i = (group_scores.sum(dim=1) > 0).float().view(n, 1)
+
+        # Sequence-level entropy weighting
+        H_avg = torch.exp(torch.log(group_entropy).mean(dim=1))
+        H_sum = H_avg.sum() + eps
+        seq_entropy_weight = (H_avg / H_sum * n).view(n, 1)
+
+        shaped[start:end] = r_i * shaped[start:end] * (1.0 + beta * seq_entropy_weight)
+
+    batch["token_level_rewards"] = shaped.detach()
+    return batch
 
 class RayPPOTrainer:
     """Distributed PPO trainer using Ray for scalable reinforcement learning.
@@ -337,7 +394,58 @@ class RayPPOTrainer:
         if self.config.algorithm.use_kl_in_reward:
             self.kl_ctrl_in_reward = core_algos.get_kl_controller(self.config.algorithm.kl_ctrl)
 
+        self.validate_called_first_time=False
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
+
+    def _create_logprob_dataloader(self, collate_fn, num_workers) -> DataLoader:
+        
+        if self.config.trainer.compute_logprob_from_file and \
+            self.config.trainer.compute_logprob_from_rollout_dir:
+            raise ValueError("Calc from single file and calc from directory were both set to true. Unexpected behaviour.")
+        
+        from verl.utils.dataset.rl_dataset import RLHFDataset
+        if self.config.trainer.compute_logprob_from_file:
+
+            logprob_dataset = RLHFDataset(
+                data_files=self.config.trainer.compute_logprob_from_file,
+                tokenizer=self.tokenizer,
+                config=self.config.data,
+                log_prob_from_chat=True
+            )
+        else:
+            
+            # get paths to relevant jsonl files
+            files = os.listdir(self.config.trainer.compute_logprob_from_rollout_dir)
+            files = list(filter(
+                lambda x: x.endswith('_rollouts.jsonl'), files
+            ))
+            if len(files) < 1:
+                raise ValueError(f"Found no files ending with '_rollouts.jsonl' in {self.config.trainer.compute_logprob_from_rollout_dir}")
+            
+            # sort files ascending: 0_rollouts.json, 5_rollouts.json, ..., 65_rollouts.json 
+            files = list(sorted(
+                files, key=lambda x: int(x.split('_')[0])
+            ))
+            files = [os.path.join(self.config.trainer.compute_logprob_from_rollout_dir, f) for f in files]
+
+            logprob_dataset = RLHFDataset(
+                data_files=files,
+                tokenizer=self.tokenizer,
+                config=self.config.data,
+                log_prob_from_rollouts_dir=True
+            )
+        
+        self.logprob_dataloader = DataLoader(
+            dataset=logprob_dataset,
+            batch_size=self.config.trainer.get("compute_logprob_batch_size", 64),
+            num_workers=num_workers,
+            shuffle=False,
+            drop_last=False,
+            collate_fn=collate_fn
+        )
+        
+        assert len(self.logprob_dataloader) >= 1, "Logprob dataloader is empty!" 
+        print("Size of logprob dataloader: ", len(self.logprob_dataloader))
 
     def _create_dataloader(self, train_dataset, val_dataset, collate_fn, train_sampler: Optional[Sampler]):
         """
@@ -387,32 +495,10 @@ class RayPPOTrainer:
             collate_fn=collate_fn,
         )
 
-        # new: if we want to calculate logprobs for pre-computed chats, we have to create a third dataset to iterate over.
-        if self.config.trainer.compute_logprob_from_file:
-            from verl.utils.dataset.rl_dataset import RLHFDataset
-
-            logprob_dataset = RLHFDataset(
-                data_files=self.config.trainer.compute_logprob_from_file,
-                tokenizer=self.tokenizer,
-                config=self.config.data,
-                log_prob_flag=True
-            )
-
-            self.logprob_dataloader = DataLoader(
-                dataset=logprob_dataset,
-                batch_size=self.config.trainer.get("compute_logprob_batch_size", 64),
-                num_workers=num_workers,
-                shuffle=False,
-                drop_last=False,
-                collate_fn=collate_fn
-            )
-            # for batch in self.logprob_dataloader:
-            #     b = DataProto.from_single_dict(batch)
-            #     b.save_to_disk('/u/rfechner/verl/sample.pt')
-            #     raise ValueError('Fin')
-            assert len(self.logprob_dataloader) >= 1, "Logprob dataloader is empty!" 
-            print("Size of logprob dataloader: ", len(self.logprob_dataloader))
-            
+        if self.config.trainer.compute_logprob_from_file or \
+            self.config.trainer.compute_logprob_from_rollout_dir:
+                self._create_logprob_dataloader(collate_fn=collate_fn, num_workers=num_workers)
+        
         assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
         assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
 
@@ -442,7 +528,7 @@ class RayPPOTrainer:
     def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
-        filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
+        filename = os.path.join(dump_path, f"{self.global_steps}_rollouts.jsonl")
 
         n = len(inputs)
         base_data = {
@@ -474,9 +560,13 @@ class RayPPOTrainer:
         lines = []
 
         for i, batch_dict in enumerate(self.logprob_dataloader):
+            # could i get input and output, as well as step of target checkpoint appended?
+            
             data: DataProto = DataProto.from_single_dict(batch_dict)
             with torch.no_grad(): # not necessary, as compute_log_prob doesn't accumulate grads, but lets be sure.
                 out = self.actor_rollout_wg.compute_log_prob(data)
+            
+
             logprobs, entropys = out.batch['old_log_probs'], out.batch['entropys']
             rmpad_logprobs = [
                 lp[mask.bool()].cpu().tolist() for lp, mask in zip(logprobs, data.batch['response_mask'], strict=True)
@@ -484,8 +574,16 @@ class RayPPOTrainer:
             rmpad_entropy = [
                 ent[mask.bool()].cpu().tolist() for ent, mask in zip(entropys, data.batch['response_mask'], strict=True)
             ]
-            entry = {"batch_index" : i, "logprobs": rmpad_logprobs, 'entropy' : rmpad_entropy}
-            lines.append(json.dumps(entry, ensure_ascii=False))
+
+            entries = [
+                {"batch_index" : i, "logprobs": rmpad_logprobs_i, 'entropy' : rmpad_entropy_i, 'checkpoint_global_step' : self.global_steps} \
+                    for rmpad_logprobs_i, rmpad_entropy_i in zip(rmpad_logprobs, rmpad_entropy)
+            ]
+            meta = [
+                {key : value[i] for key, value in data.non_tensor_batch.items()} for i in range(len(data))
+            ]
+
+            lines.extend([json.dumps({**entry, **m}, ensure_ascii=False) for entry, m in zip(entries, meta)])
 
         return lines
 
@@ -562,28 +660,114 @@ class RayPPOTrainer:
 
         return gen_batch
 
-    def _maybe_dump_logprobs_for_precomputed_chats(self):
-        compute_file = self.config.trainer.get("compute_logprob_from_file", None)
-        val_data_dir_cfg = self.config.trainer.get("validation_data_dir", None)
+    def dump_logprobs_for_precomputed_chats(self):
+        """
+            Takes the prompts and responses from the self.logprob_dataloader and
+            calculates the log-probs for the responses. Dumps the logprobs and corresponding entropy to
+            file.
+        """
+        outpath = os.path.join(self.config.trainer.validation_data_dir, f"{self.global_steps}_precomp.jsonl")
+        lines = self.compute_chat_logprobs()
+        with open(outpath, "w") as fo:
+            fo.write("\n".join(lines) + "\n")
+        print(f"Wrote precomputed logprobs to {outpath}")
 
-        if compute_file:
-            out_path = None
-            if val_data_dir_cfg:
-                os.makedirs(val_data_dir_cfg, exist_ok=True)
-                out_path = os.path.join(val_data_dir_cfg, f"{self.global_steps}_precomp.jsonl")
-            else:
-                out_path = os.path.join(self.config.trainer.default_local_dir, f"{self.global_steps}_precomp.jsonl")
+    def set_firsttime_called(self) -> bool:
+        """returns whether to early exit or not."""
 
-            lines = self.compute_chat_logprobs()
-            with open(out_path, "w") as fo:
-                fo.write("\n".join(lines) + "\n")
-            print(f"Wrote precomputed logprobs to {out_path}")
+        os.makedirs(self.config.trainer.validation_data_dir, exist_ok=True)
+        def load_checkpoint_paths():
+            """
+                From a given checkpoint directory, we should return all valid global_step_X directories.
 
+                NOTE: This function returns [None, path1, path2, ..., pathk], as the _load_checkpoint_from_path
+                method expects either a string path for a valid verl checkpoint or None in case we're evaluating the base model.
+                When this function is called after initialization, the base model is already in memory.
+            """
+            directory = self.config.trainer.get('grid_checkpoint_directory')
+            if (not directory) or not os.path.isdir(directory):
+                raise ValueError("+trainer.grid_checkpoint_directory wasn't supplied or isn't a directory.")
+            
+            # get all 'global_step_X' directories. Sort by step value.
+            checkpoints = list(filter(lambda x: x.startswith('global_step_'), os.listdir(directory)))
+            checkpoints = list(sorted(checkpoints, key=lambda x: int(x.split('_')[-1]))) # sorts ascending
+            checkpoints = ['BASEMODEL'] + checkpoints # pre-pend None s.t. basemodel is validated first.
+            print('Loaded checkpoints:\n', "\n".join(checkpoints))
+            
+            # I assume that the evaluation scripts have to be re-run mutliple times to finish. In these cases, we'd like
+            # to continue from a specific checkpoint. We should infer the checkpoints we still need to evaluate.
+            target_directory = self.config.trainer.validation_data_dir
+            os.makedirs(target_directory, exist_ok=True)
+            
+            # bunch of files like '5_precomp.jsonl, 5_rollouts.jsonl, 10_precomp.jsonl, ...
+            target_logfiles = list(filter(lambda x: x.endswith('_rollouts.jsonl'), os.listdir(target_directory)))
+
+            if len(target_logfiles) > 0: # we've ran the evaluation script before and havent finished.
+                largest = max([int(t.split('_')[0]) for t in target_logfiles])
+                checkpoints = list(filter(
+                    lambda x: x != 'BASEMODEL' and (int(x.split('_')[-1]) > largest), checkpoints
+                ))
+
+            checkpoints = [os.path.join(directory, cp) if cp != 'BASEMODEL' else cp for cp in checkpoints]
+            print("Checkpoints after filtering for already completed:\n", "\n".join(checkpoints))
+            return checkpoints
+        
+
+        self.validate_called_first_time=True
+        if not self.config.trainer.get('grid_checkpoint_directory', False): # regular validate call
+            return False
+        
+        if not self.config.trainer.val_only:
+            raise ValueError("Grid Evaluation only supported for single evaluation run. Please set val_only=True")
+        
+        """
+        output is:
+            projname/expname
+                val_jsonl
+                    5.jsonl
+                    5_precomp.jsonl
+                    10.jsonl
+                    10_precomp.jsonl
+                    ...
+                logs.jsonl
+
+        """
+        # grid evaluate was called. Iterate over checkpoints. inject subdirectory name into validate function.
+
+        checkpoint_paths : list[str] = load_checkpoint_paths()
+        
+        with open(os.path.join(self.config.trainer.default_local_dir, 'logs.jsonl'), 'a') as fp:
+            for i, checkpoint in enumerate(checkpoint_paths):
+                self._load_checkpoint_from_path(checkpoint) # this sets self.global_steps through which we identify the logs
+                val_metrics = self._validate()
+
+                if val_metrics:
+                    entry = {"step": self.global_steps, "data": val_metrics}
+
+                    # usually I'd take the self.logger to log the validation metrics, but as i only have a single
+                    # log here anyways, I'll just dump the validation metrics to the checkpoint directory.
+                    fp.write(json.dumps(obj=entry) + '\n')
+                    fp.flush()
+
+                print(f"[{i}/{len(checkpoint_paths)}] Completed validation for checkpoint: {checkpoint}")
+
+        return True
+    
     def _validate(self):
-        print("[VALIDATION] Precomputed Logprobs")
-        self._maybe_dump_logprobs_for_precomputed_chats()
 
-        print("[VALIDATION] validation rollouts")
+        if not self.validate_called_first_time:
+            early_exit : bool = self.set_firsttime_called()
+            if early_exit:
+                exit(0)
+            
+        if not self.config.trainer.skip_logprobs:
+            print("[VALIDATION] Logprobs")
+            self.dump_logprobs_for_precomputed_chats()
+
+        if self.config.trainer.skip_validation:
+            return {}
+        
+        print("[VALIDATION] Rollouts")
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -684,6 +868,7 @@ class RayPPOTrainer:
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
+        # this logs to tracking backend. File/console isn't supported.
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
         # dump generations
@@ -893,6 +1078,32 @@ class RayPPOTrainer:
         with open(local_latest_checkpointed_iteration, "w") as f:
             f.write(str(self.global_steps))
 
+    def _load_checkpoint_from_path(self, path : str):
+        
+        if path == 'BASEMODEL': # we're trying to load the base model. Should already be in memory.
+            return
+        
+        assert isinstance(path, str), "resume ckpt must be str type"
+        assert "global_step_" in path, (
+            "resume ckpt must specify the global_steps"
+        )
+        if not os.path.isabs(path):
+            working_dir = os.getcwd()
+            path = os.path.join(working_dir, path)
+        
+        # set global step
+        self.global_steps = int(path.split("global_step_")[-1])
+
+        print(f"Setting global step to {self.global_steps}")
+        actor_path = os.path.join(path, "actor")
+
+        # load actor
+        self.actor_rollout_wg.load_checkpoint(
+            actor_path, del_local_after_load=self.config.trainer.del_local_ckpt_after_load
+        )
+        print(f'Loaded Checkpoint from {path}. Continue')
+
+
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
             return 0
@@ -923,6 +1134,7 @@ class RayPPOTrainer:
                     working_dir = os.getcwd()
                     global_step_folder = os.path.join(working_dir, global_step_folder)
         print(f"Load from checkpoint folder: {global_step_folder}")
+        
         # set global step
         self.global_steps = int(global_step_folder.split("global_step_")[-1])
 
@@ -1000,7 +1212,7 @@ class RayPPOTrainer:
 
         from verl.utils.tracking import Tracking
 
-        logger = Tracking(
+        self.logger = Tracking(
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
             default_backend=self.config.trainer.logger,
@@ -1018,7 +1230,7 @@ class RayPPOTrainer:
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
-            logger.log(data=val_metrics, step=self.global_steps)
+            self.logger.log(data=val_metrics, step=self.global_steps)
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -1130,7 +1342,6 @@ class RayPPOTrainer:
                             future_reward = compute_reward_async.remote(data=batch, reward_fn=self.reward_fn)
                         else:
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
-
                     
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
@@ -1151,7 +1362,10 @@ class RayPPOTrainer:
                         entropy_agg = agg_entropy(mat=entropys, mask=response_masks)
                         old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
                         metrics.update(old_log_prob_metrics)
-                        old_log_prob.batch.pop("entropys")
+                        
+                        # why are we popping entropy? May need it further down the road.
+                        # TODO: GRPO-S
+                        # old_log_prob.batch.pop("entropys")
                         batch = batch.union(old_log_prob)
 
                         if "rollout_log_probs" in batch.batch.keys():
@@ -1195,6 +1409,15 @@ class RayPPOTrainer:
                         else:
                             batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
 
+                        if self.config.algorithm.get('gtpo', False):
+                            batch.batch = gtpo(batch=batch.batch, 
+                                        n=self.config.actor_rollout_ref.rollout.n,
+                                        alpha=self.config.algorithm.get('gtpo-alpha', 0.1))
+                        elif self.config.algorithm.get('grpo-s', False):
+                            batch.batch = grpo_s(batch=batch.batch, 
+                                            n=self.config.actor_rollout_ref.rollout.n,
+                                            beta=self.config.algorithm.get('grpo-s-beta', 0.1))
+                            
                         # compute advantages, executed on the driver process
                         norm_adv_by_std_in_grpo = self.config.algorithm.get(
                             "norm_adv_by_std_in_grpo", True
@@ -1299,7 +1522,7 @@ class RayPPOTrainer:
                     self.train_dataloader.sampler.update(batch=batch)
 
                 # TODO: make a canonical logger that supports various backend
-                logger.log(data=metrics, step=self.global_steps)
+                self.logger.log(data=metrics, step=self.global_steps)
 
                 progress_bar.update(1)
                 self.global_steps += 1

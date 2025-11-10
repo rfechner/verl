@@ -163,6 +163,8 @@ val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
 python -u -m verl.trainer.main_ppo \
     algorithm.adv_estimator=${algorithm_adv_estimator} \
+    +algorithm.gtpo=${gtpo} \
+    +algorithm.grpo_s=${grpo_s} \
     data.train_files="$train_files" \
     data.val_files="$val_files" \
     data.train_batch_size=$train_batch_size \
@@ -181,6 +183,7 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.entropy_checkpointing=${ref_entropy_checkpointing} \
     actor_rollout_ref.ref.fsdp_config.forward_prefetch=${ref_fsdp_forward_prefetch} \
     actor_rollout_ref.ref.strategy="${ref_strategy}" \
+    actor_rollout_ref.actor.entropy_coeff=${entropy_coeff} \
     actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.actor.use_dynamic_bsz=${actor_use_dynamic_bsz} \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$((1 * (max_prompt_length + max_response_length))) \
@@ -215,7 +218,12 @@ python -u -m verl.trainer.main_ppo \
     +trainer.validation_data_dir=${trainer_validation_data_dir} \
     +trainer.compute_logprob_from_file=${trainer_compute_logprob_from_file} \
     +trainer.compute_logprob_batch_size=${trainer_compute_logprob_batch_size} \
-    trainer.resume_mode=${trainer_resume_mode} \
+    +trainer.compute_logprob_from_rollout_dir=${trainer_compute_logprob_from_rollout_dir} \
+    +trainer.grid_checkpoint_directory=${trainer_grid_checkpoint_directory} \
+    +trainer.skip_validation=$trainer_skip_validation \
+    +trainer.skip_logprobs=$trainer_skip_logprobs \
+    trainer.resume_mode="${trainer_resume_mode}" \
+    trainer.resume_from_path="${trainer_resume_path}" \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \
     trainer.logger='["console", "file"]' \
@@ -224,6 +232,7 @@ python -u -m verl.trainer.main_ppo \
     trainer.nnodes=${trainer_nnodes} \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
+    trainer.val_only=${trainer_only_evaluate} \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
     trainer.total_epochs=$total_epochs \
     trainer.experiment_name=$experiment_name \

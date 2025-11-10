@@ -3,12 +3,14 @@
 import argparse
 import os
 import subprocess
-from typing import Dict, List, Any
 import json
+import pathlib
 
+from typing import Dict, List, Any
+from checkpoint_utils import handle_checkpoint_validation, handle_model_method_validation
 """
-    Main training run entrypoint. Currently supports GRPO, DAPO, and Dr. GRPO. The purpose of this script
-    is to unity the export of environment variables for performance tuning, sampling and other critical hyperparameters,
+    Main training run entrypoint. Purpose is to unite the export of environment
+    variables for performance tuning, sampling and other critical hyperparameters,
     such that we may be sure that we're making fair comparisons.
 
     This script exports environment variables, which are accessed by the shell scripts which start the training. For ease of implementation
@@ -37,6 +39,10 @@ def collect_export_vars(config: Dict[str, Any]) -> List[str]:
 models = {
     'llama3-small' : "meta-llama/Llama-3.2-1B-Instruct",
     'llama3-medium' : "meta-llama/Llama-3.2-3B-Instruct",
+    'llama3-large' : "meta-llama/Llama-3.1-8B-Instruct",
+    'qwen2.5-small' : "Qwen/Qwen2.5-0.5B",
+    'qwen2.5-medium' : "Qwen/Qwen2.5-1.5B",
+    'qwen2.5-large' : "Qwen/Qwen2.5-7B",
     'qwen3-small' : "Qwen/Qwen3-0.6B",
     'qwen3-medium' : "Qwen/Qwen3-4B",
     'qwen3-large' : "Qwen/Qwen3-8B",
@@ -47,9 +53,20 @@ models = {
 }
 
 def main():
+    method_valid_choices = [
+        'grpo',
+        'drgrpo',
+        'gspo',
+        'dapo',
+        'kl-cov',
+        'clip-cov',
+        'grpo-s',
+        'gtpo',
+        'entropy_reg'
+    ]
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
-    parser.add_argument("--method", required=True, choices=["grpo", "dapo", "drgrpo", "gspo"], help="Which training method to use")
-    parser.add_argument("--model", type=str, default='qwen3-medium', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
+    parser.add_argument("--method", required=True, choices=method_valid_choices, help="Which training method to use")
+    parser.add_argument("--model", type=str, default='meta-llama/Llama-3.2-1B-Instruct', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
     parser.add_argument("--project-name", required=True, help="Project name for checkpoint organization")
     parser.add_argument("--identifier", default=None, help="Optional identifier appended to run name")
     parser.add_argument("--train-file", default="/u/rfechner/data/dapo17k/train.parquet")
@@ -58,18 +75,93 @@ def main():
     parser.add_argument("--valn", type=int, default=8, help="Number of validation samples to dump per validation step.")
     parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
     parser.add_argument("--no-logprobs", action='store_true', default=False, help='flag: do not compute logprobs for pre-rollouts')
-    parser.add_argument("--no-rollouts", action='store_true', default=False, help='flag: do not calculate/dump rollouts.')
+    parser.add_argument("--no-validation", action='store_true', default=False, help='flag: do not calculate/dump validation rollouts.')
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--savefreq", type=int, default=10)
     parser.add_argument("--testfreq", type=int, default=5)
     parser.add_argument("--nodes", type=int, default=2)
+    parser.add_argument("--cp", type=str, default=None, help="Model Checkpoint to train/eval from. Specify 'global_step_X' directory.")
 
+    # ======== EVAL OPTIONS ========
+    parser.add_argument("--eval", action="store_true", help="Runs evaluation from given checkpoint. Needs --checkpoint to be specified")
+    parser.add_argument("--cpdir", type=str, default=None, help="Model Checkpoint directory to load checkpoints from. Note: This can only be set in case we're evaluating.")
+    parser.add_argument("--lpfile", type=str, default=None, help="Path to jsonl file containing chats. Note: This can only be set in case we're evaluating.")
+    parser.add_argument("--lpdir", type=str, default=None, help="Path to directory to load `X_rollout.jsonl` files from to calculate logprobs.")
+    parser.add_argument("--dryrun", action='store_true', default=False, help='Whether to dryrun the current experiment. This will terminate the script before delegating to sbatch.')
     args = parser.parse_args()
 
+    # ======== Argument Verification ========
+
+    # paths correct?
+    if args.lpfile:
+        if not os.path.isabs(args.lpfile):
+            raise ValueError("Please give absolute path for validation.")
+        if not os.path.isfile(args.lpfile):
+            raise ValueError(f"Specified lpfile isn't a file: {args.lpfile}")
+        
+    if args.lpdir:
+        if not os.path.isabs(args.lpdir):
+            raise ValueError("Please give absolute path for validation.")
+        if not os.path.isdir(args.lpdir):
+            raise ValueError(f"Specified lpdir isn't a directory: {args.lpdir}")
+    
+    if args.cpdir:
+        if not os.path.isabs(args.cpdir):
+            raise ValueError("Please give absolute path.")
+        if not os.path.isdir(args.cpdir):
+            raise ValueError(f"Specified cpdir isn't a directory: {args.cpdir}")
+    
+    if args.cp:
+        if not os.path.isabs(args.cp):
+            raise ValueError("Please give absolute path.")
+        if not os.path.isdir(args.cp):
+            raise ValueError(f"Specified cp isn't a directory: {args.cp}")
+          
     # resolve alias
     if args.model in models:
         args.model = models[args.model]
+        
+    if args.no_logprobs:
+        if args.lpfile or args.lpdir:
+            raise ValueError('specified no logprobs, but gave lpfile or lpdir in args. Wrong experiment setup?')
     
+    if args.eval:
+        if args.cp and args.cpdir:
+            raise ValueError("Cannot load from checkpoint --cp and checkpoint directory --cpdir")
+        if (not args.cp) and (not args.cpdir):
+            raise ValueError("Found --eval, but no checkpoint to evaluate from was given. Please specify --cp or --cpdir")
+        if args.no_logprobs and args.no_validation:
+            raise ValueError("Both, --no-logprobs and --no-validation was set.")
+    
+    if args.cp:
+        path = pathlib.Path(args.cp).expanduser().resolve()
+        assert path.is_dir() and path.exists() and path.parts[-1].startswith('global_step'), \
+            "Malformed checkpoint path."
+        args.cp = path
+
+        handle_checkpoint_validation(args.cp, args.nodes * 4) # 4 GPUs per Node have to match world_size of chkpt
+        handle_model_method_validation(args.cp, args.method, args.model) # for re-loading. Make sure method/model is chosed correctly.
+
+    if args.cpdir:
+        if not args.eval:
+            raise ValueError("Cannot load checkpoints from directory source if not in eval.")
+        
+        files = os.listdir(args.cpdir)
+        checkpoint_files = list(filter(lambda x: x.startswith('global_step_'), files))
+        assert len(checkpoint_files) > 0, f"No checkpoints found at directory: {args.cpdir}"
+
+        random_checkpoint = os.path.join(args.cpdir, checkpoint_files[0])
+        handle_checkpoint_validation(random_checkpoint, args.nodes * 4) # 4 GPUs per Node have to match world_size of chkpt
+        handle_model_method_validation(random_checkpoint, args.method, args.model) # for re-loading. Make sure method/model is chosed correctly.
+
+    else: # we're training
+        if args.cpdir:
+            raise ValueError("Training but checkpoint directory was set. This option is only used in evaluation. To set a checkpoint use --cp pointing towards .../global_step_X directory.")
+        if args.no_validation:
+            raise ValueError("Running training without validation.")
+        if args.valn > 16:
+            raise ValueError("Running training with too high number of validation rollouts.")
+
     from huggingface_hub import login
     login(token=open("/u/rfechner/.cache/huggingface/token").read().strip())
     print("Logged into huggingface hub.")
@@ -91,21 +183,37 @@ def main():
 
     # Decide entrypoint script
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    entrypoint_script = os.path.join(this_dir, f"{args.method}_entrypoint{'_4nodes' if args.nodes==4 else ''}.sh")
     
-    # TODO: could we instead of conditioning the script on the args.nodes make a pre-processor which goes in and
-    # replaces the SLURM nodes=x variable?
-    
+    entrypoint_script = {
+        'grpo' : 'grpo_entrypoint.sh',
+        'gtpo' : 'grpo_entrypoint.sh',
+        'grpo-s' : 'grpo_entrypoint.sh',
+        'entropy_reg' : 'grpo_entrypoint.sh',
+        'kl-cov' : 'klcov_entrypoint.sh',
+        'clip-cov' : 'klcov_entrypoint.sh',
+        'gspo' : 'gspo_entrypoint.sh',
+        'dapo' : 'dapo_entrypoint.sh',
+        'drgrpo' : 'drgrpo_entrypoint.sh'
+    }[args.method]
+
+    entrypoint_script = os.path.join(this_dir, entrypoint_script)
     # base hyperparams. These are the variable and "important" parameters
     config = {
+
         # Precomputed Q+A file for which to compute log-probs during validation
-        "trainer_compute_logprob_from_file": "/u/rfechner/verl/workspace/chats.jsonl" if not args.no_logprobs else '',
+        "trainer_compute_logprob_from_file": args.lpfile if not args.no_logprobs else False, # for calculating logprobs from single file -> could be regular chat or chat_with_suffix
+        "trainer_compute_logprob_from_rollout_dir" : args.lpdir if not args.no_logprobs else False, # for calculating lps from directory
+        "trainer_grid_checkpoint_directory" : args.cpdir if args.eval else False, # for multiple checkpoint evaluation sweep
+        "trainer_resume_mode": "resume_path" if args.cp else "auto", # for single checkpoint evaluation or continued training
+        "trainer_resume_path" : args.cp,
+        "trainer_skip_validation" : args.no_validation,
+        "trainer_skip_logprobs" : args.no_logprobs,
 
         # Where to dump validation generations (placed next to checkpoints by default)
-        "trainer_validation_data_dir": os.path.join("/ptmp/rfechner/out", args.project_name, expname, "val_jsonl") if not args.no_rollouts else '',
+        "trainer_validation_data_dir": os.path.join(checkpoint_dir, "val_jsonl"),
         
         # Where to dump rollout generations (placed next to checkpoints by default)
-        "trainer_rollout_data_dir" : os.path.join("/ptmp/rfechner/out", args.project_name, expname, "rollout_jsonl") if not args.no_rollouts else '',
+        "trainer_rollout_data_dir" : os.path.join(checkpoint_dir, "train_jsonl"),
         
         "model_path": args.model,
         "train_files": args.train_file,
@@ -126,7 +234,11 @@ def main():
         "temperature" : 1.0, # training temperature == val temperature
         "top_k" : -1, # vllm rollouts
         "top_p" : 1.0, # training top-p
-        "val_top_p" : 0.7
+        "val_top_p" : 0.7,
+        "gtpo" : args.method=='gtpo',
+        "grpo_s" : args.method=='gpro-s',
+        "loss_mode" : args.method.replace('-', '_') if args.method in ['gspo', 'kl-cov', 'clip-cov'] else 'vanilla',
+        "entropy_coeff" : 0.001 if args.method == 'entropy_reg' else 0
     }
 
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
@@ -166,11 +278,11 @@ def main():
         "rollout_val_do_sample": True,
         
         # batch size for computing log-probs on actor workers
-        "trainer_compute_logprob_batch_size": 8,
+        "trainer_compute_logprob_batch_size": 64,
         "rollout_disable_log_stats": False,
         "rollout_engine" : "vllm",
-        "trainer_resume_mode": "auto",
-        "trainer_val_before_train": False,
+        "trainer_val_before_train": True, # updated from args.eval | False, because we always want rollouts_0 and so on.
+        "trainer_only_evaluate" : args.eval,
         "trainer_n_gpus_per_node": 4,
         "trainer_nnodes": 2,
         "trainer_remove_previous_ckpt_in_save": False,
@@ -185,6 +297,10 @@ def main():
     export_list = collect_export_vars(config)
     sbatch_cmd = ["sbatch", f"--export={','.join(export_list)}", entrypoint_script]
 
+    if args.dryrun:
+        print("✅ Passed preliminary checks. Experiment seems well formed. Exited with --dryrun option.")
+        return
+    
     try:
         result = subprocess.run(sbatch_cmd, check=True, capture_output=True, text=True)
         print("Job submitted:")

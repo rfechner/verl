@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=dapo
-#SBATCH --output=/u/rfechner/jobs/dapo_%j.out   # Standard output file (%j expands to job ID)
-#SBATCH --error=/u/rfechner/jobs/dapo_%j.err    # Standard error file (%j expands to job ID)
+#SBATCH --job-name=klcov
+#SBATCH --output=/u/rfechner/jobs/klcov_%j.out   # Standard output file (%j expands to job ID)
+#SBATCH --error=/u/rfechner/jobs/klcov_%j.err    # Standard error file (%j expands to job ID)
 #SBATCH --nodes=2
 #SBATCH --exclusive             
 #SBATCH --partition=general                                 # main partition containing GPU nodes
@@ -160,25 +160,34 @@ cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
+clip_ratio_low=1
+clip_ratio_high=1
+clip_cov_ratio=0.0002
+clip_cov_lb=1.0
+clip_cov_ub=5.0
+kl_cov_ratio=0.002
+ppo_kl_coef=1.0
+
 use_kl_in_reward=False
 use_kl_loss=False
 kl_loss_coef=0.0
 clip_ratio_low=0.2
-clip_ratio_high=0.28
-enable_overlong_buffer=True
+clip_ratio_high=0.2
+
+enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 2))
 overlong_penalty_factor=1.0
 loss_agg_mode="token-mean"
-max_num_gen_batches=0 # generate indefinitely until we've got enough non-zero std samples in the batch.
+max_num_gen_batches=0 # generate indefinitely, until we've got enough non-zero samples in the batch.
 enable_filter_groups=True
 filter_groups_metric=acc
 
-# delegates to the dapo trainer, which does the dynamic sampling.
-python -u -m recipe.dapo.main_dapo \
+python -u -m recipe.entropy.main_entropy \
     algorithm.adv_estimator=${algorithm_adv_estimator} \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
+    algorithm.use_kl_in_reward=${use_kl_in_reward} \
     data.train_files="$train_files" \
     data.val_files="$val_files" \
     data.train_batch_size=$train_batch_size \
@@ -210,7 +219,13 @@ python -u -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.clip_ratio_c=10.0 \
     actor_rollout_ref.actor.grad_clip=${grad_clip} \
-    actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
+    actor_rollout_ref.actor.policy_loss.loss_mode=${loss_mode} \
+    actor_rollout_ref.actor.policy_loss.kl_cov_ratio=${kl_cov_ratio} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_ratio=${clip_cov_ratio} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_lb=${clip_cov_lb} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_ub=${clip_cov_ub} \
+    actor_rollout_ref.actor.policy_loss.ppo_kl_coef=${ppo_kl_coef} \
+    actor_rollout_ref.actor.loss_agg_mode='token-mean' \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${actor_ulysses_sequence_parallel_size} \
     actor_rollout_ref.actor.strategy="${actor_strategy}" \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${rollout_log_prob_use_dynamic_bsz} \
@@ -239,7 +254,6 @@ python -u -m recipe.dapo.main_dapo \
     +trainer.skip_validation=$trainer_skip_validation \
     +trainer.skip_logprobs=$trainer_skip_logprobs \
     trainer.resume_mode="${trainer_resume_mode}" \
-    algorithm.use_kl_in_reward=${use_kl_in_reward} \
     trainer.resume_from_path="${trainer_resume_path}" \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \
@@ -253,10 +267,9 @@ python -u -m recipe.dapo.main_dapo \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
     trainer.total_epochs=$total_epochs \
     reward_model.reward_manager=dapo \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.enable=${enable_overlong_buffer} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.len=${overlong_buffer_len} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=${overlong_penalty_factor} \
-    +reward_model.reward_kwargs.overlong_buffer_cfg.log=False \
+    reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
+    reward_model.overlong_buffer.len=${overlong_buffer_len} \
+    reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
     +reward_model.reward_kwargs.max_resp_len=${max_response_length} \
     trainer.experiment_name=$experiment_name
         

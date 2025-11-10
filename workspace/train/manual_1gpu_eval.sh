@@ -50,8 +50,10 @@ brumo2025=/u/rfechner/data/brumo_2025/test.parquet
 cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
-project_name="manual_1gpu"
+project_name="manual_1gpu_singleeval_delta"
 experiment_name="llama_3.2_1b_instruct__grpo"
+single_logprob_file="/u/rfechner/data/eic_gsm8k_generated/delta.jsonl" #"/u/rfechner/verl/workspace/chats.jsonl"
+logprob_dir=false #"/ptmp/rfechner/out/manual_1gpu/llama_3.2_1b_instruct__grpo/val_jsonl/"
 
 echo "Logged into huggingface"
 CHECKPOINT_DIR="/ptmp/rfechner/out/${project_name}/${experiment_name}"
@@ -110,17 +112,20 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
-    +trainer.compute_logprob_batch_size=2 \
+    +trainer.compute_logprob_from_file=$single_logprob_file \
+    +trainer.compute_logprob_from_rollout_dir=$logprob_dir \
+    +trainer.compute_logprob_batch_size=64 \
+    +trainer.grid_checkpoint_directory="/ptmp/rfechner/out/manual_1gpu/llama_3.2_1b_instruct__grpo/" \
+    trainer.val_only=true \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
     trainer.project_name=${project_name} \
     trainer.logger='["console", "file"]' \
-    trainer.val_before_train=false \
+    trainer.val_before_train=true \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=1 \
     trainer.test_freq=1 \
     +trainer.remove_previous_ckpt_in_save=false \
     trainer.total_epochs=2 \
-    trainer.experiment_name=${exp_name}
+    trainer.experiment_name=${experiment_name}

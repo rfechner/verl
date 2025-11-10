@@ -227,7 +227,12 @@ python -u -m verl.trainer.main_ppo \
     +trainer.validation_data_dir=${trainer_validation_data_dir} \
     +trainer.compute_logprob_from_file=${trainer_compute_logprob_from_file} \
     +trainer.compute_logprob_batch_size=${trainer_compute_logprob_batch_size} \
+    +trainer.compute_logprob_from_rollout_dir=${trainer_compute_logprob_from_rollout_dir} \
+    +trainer.grid_checkpoint_directory=${trainer_grid_checkpoint_directory} \
+    +trainer.skip_validation=$trainer_skip_validation \
+    +trainer.skip_logprobs=$trainer_skip_logprobs \
     trainer.resume_mode=${trainer_resume_mode} \
+    trainer.resume_from_path=${trainer_resume_path} \
     trainer.default_local_dir="${checkpoint_dir}" \
     trainer.project_name="$project_name" \
     trainer.logger='["console", "file"]' \
@@ -236,6 +241,7 @@ python -u -m verl.trainer.main_ppo \
     trainer.nnodes=${trainer_nnodes} \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
+    trainer.val_only=${trainer_only_evaluate} \
     +trainer.remove_previous_ckpt_in_save=${trainer_remove_previous_ckpt_in_save} \
     trainer.total_epochs=$total_epochs \
     trainer.experiment_name=$experiment_name \

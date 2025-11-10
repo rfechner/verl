@@ -44,25 +44,42 @@ conda activate verl
 # logging into huggingface
 python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
 
+# i have to do it this way, as exporting via python + hydra parsing is horrible.
 math500=/u/rfechner/data/math500/test.parquet
 aime25=/u/rfechner/data/aime25/test.parquet
 brumo2025=/u/rfechner/data/brumo_2025/test.parquet
 cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
-test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
-project_name="manual_1gpu"
-experiment_name="llama_3.2_1b_instruct__grpo"
+val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
-echo "Logged into huggingface"
-CHECKPOINT_DIR="/ptmp/rfechner/out/${project_name}/${experiment_name}"
+clip_cov_ratio=0.0002
+clip_cov_lb=1.0
+clip_cov_ub=5.0
+kl_cov_ratio=0.002
+ppo_kl_coef=1.0
 
-export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
-python -u -m verl.trainer.main_ppo \
+use_kl_in_reward=False
+use_kl_loss=False
+kl_loss_coef=0.0
+
+enable_overlong_buffer=False
+overlong_buffer_len=$((1024 * 2))
+overlong_penalty_factor=1.0
+loss_agg_mode="token-mean"
+max_num_gen_batches=0
+enable_filter_groups=True
+filter_groups_metric=acc
+
+echo "Running training."
+checkpoint_dir="/ptmp/rfechner/out/default/test2"
+python -u -m recipe.entropy.main_entropy \
     algorithm.adv_estimator=grpo \
-    +algorithm.gtpo=false \
-    +algorithm.gtpo-alpha=0.1 \
+    algorithm.filter_groups.enable=${enable_filter_groups} \
+    algorithm.filter_groups.metric=${filter_groups_metric} \
+    algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
+    algorithm.use_kl_in_reward=${use_kl_in_reward} \
     data.train_files="/u/rfechner/data/math/train.parquet" \
-    data.val_files="$test_files" \
+    data.val_files="$val_files" \
     data.train_batch_size=512 \
     data.max_prompt_length=1024 \
     data.max_response_length=3072 \
@@ -109,18 +126,30 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=true \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
-    +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
+    +trainer.validation_data_dir="${checkpoint_dir}/val_jsonl" \
     +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
     +trainer.compute_logprob_batch_size=2 \
     trainer.resume_mode=auto \
-    trainer.default_local_dir="${CHECKPOINT_DIR}" \
-    trainer.project_name=${project_name} \
+    trainer.default_local_dir="${checkpoint_dir}" \
+    trainer.project_name="default" \
     trainer.logger='["console", "file"]' \
     trainer.val_before_train=false \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
-    trainer.save_freq=1 \
-    trainer.test_freq=1 \
+    trainer.save_freq=10 \
+    trainer.test_freq=2 \
     +trainer.remove_previous_ckpt_in_save=false \
-    trainer.total_epochs=2 \
-    trainer.experiment_name=${exp_name}
+    reward_model.reward_manager=dapo \
+    reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
+    reward_model.overlong_buffer.len=${overlong_buffer_len} \
+    reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
+    +reward_model.reward_kwargs.max_resp_len=3072 \
+    actor_rollout_ref.actor.policy_loss.loss_mode=clip_cov \
+    actor_rollout_ref.actor.policy_loss.kl_cov_ratio=${kl_cov_ratio} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_ratio=${clip_cov_ratio} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_lb=${clip_cov_lb} \
+    actor_rollout_ref.actor.policy_loss.clip_cov_ub=${clip_cov_ub} \
+    actor_rollout_ref.actor.policy_loss.ppo_kl_coef=${ppo_kl_coef} \
+    actor_rollout_ref.actor.loss_agg_mode='token-mean' \
+    trainer.total_epochs=10 \
+    trainer.experiment_name="test"

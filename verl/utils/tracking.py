@@ -22,7 +22,7 @@ from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import Any
-
+from collections import deque
 
 class Tracking:
     """A unified tracking interface for logging experiment data to multiple backends.
@@ -220,12 +220,10 @@ class ClearMLLogger:
     def finish(self):
         self._task.close()
 
-
 class FileLogger:
     def __init__(self, project_name: str, experiment_name: str):
         self.project_name = project_name
         self.experiment_name = experiment_name
-
         self.filepath = os.getenv("VERL_FILE_LOGGER_PATH", None)
         if self.filepath is None:
             root_path = os.path.expanduser(os.getenv("VERL_FILE_LOGGER_ROOT", "."))
@@ -233,13 +231,35 @@ class FileLogger:
             os.makedirs(directory, exist_ok=True)
             self.filepath = os.path.join(directory, "logs.jsonl")
             print(f"Creating file logger at {self.filepath}")
-        self.fp = open(self.filepath, "a")
+
+        # Single file handle for both reading & appending
+        self.fp = open(self.filepath, "a+")
+
+        # Find last logged step
+        self.last_step = self._get_last_logged_step()
+
+    def _get_last_logged_step(self):
+        self.fp.seek(0)  # rewind
+        try:
+            last_line = deque(self.fp, maxlen=1)
+            if not last_line:
+                return -1  # empty file
+            data = json.loads(last_line[0])
+            return data.get("step", -1)
+        except Exception:
+            return -1
+        finally:
+            self.fp.seek(0, os.SEEK_END)  # move back to append position
 
     def log(self, data, step):
-        data = {"step": step, "data": data}
-        self.fp.write(json.dumps(data) + "\n")
-        self.fp.flush() # forces immediate write to file instead of buffering.
-        
+        if step <= self.last_step:
+            return  # skip duplicate or rewinded training steps
+
+        entry = {"step": step, "data": data}
+        self.fp.write(json.dumps(entry) + "\n")
+        self.fp.flush()
+        self.last_step = step
+
     def finish(self):
         self.fp.close()
 

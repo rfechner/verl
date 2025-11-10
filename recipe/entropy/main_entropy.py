@@ -14,11 +14,12 @@
 """
 Note that we don't combine the main with ray_trainer as ray_trainer is used by other main.
 """
-
+import os
 import hydra
 import ray
 from omegaconf import OmegaConf
 
+from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
 from .entropy_ray_trainer import RayEntropyTrainer
 from .reward import load_reward_manager
 
@@ -30,16 +31,31 @@ def main(config):
 
 def run_ppo(config) -> None:
     if not ray.is_initialized():
+        
+        default_runtime_env = get_ppo_ray_runtime_env()
         # this is for local ray cluster
-        default_runtime_env = {
-            "env_vars": {
-                "TOKENIZERS_PARALLELISM": "true",
-                "NCCL_DEBUG": "WARN",
-                "VLLM_LOGGING_LEVEL": "WARN",
-                "WANDB_API_KEY": "YOUR_WANDB_API_KEY",
+        ray_init_kwargs = {
+            'runtime_env' : {
+                'working_dir': 'verl/',
+                'excludes' : ["/.git/"],
+                'env_vars': {
+                    'ROCR_VISIBLE_DEVICES' : "", # unset ROCR visible devices. Required by verl.
+                    'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
+                    'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
+                    'TOKENIZERS_PARALLELISM': 'true',
+                    'NCCL_DEBUG': 'WARN',
+                    'VLLM_LOGGING_LEVEL': 'WARN'
+                }
             }
         }
-        ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
+        ray_address = os.environ.get('RAY_ADDRESS')
+        ray_temp_dir = os.environ.get('RAY_TMPDIR')
+        
+        if ray_address:
+            ray_init_kwargs['address'] = ray_address
+        if ray_temp_dir:
+            ray_init_kwargs['_temp_dir'] = ray_temp_dir
+
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})

@@ -88,7 +88,9 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
-        log_prob_flag=False
+        log_prob_from_chat=False,
+        log_prob_from_rollouts_dir=False,
+        log_prob_from_chat_file=False
     ):
         if not isinstance(data_files, list | ListConfig):
             data_files = [data_files]
@@ -104,7 +106,7 @@ class RLHFDataset(Dataset):
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
         self.max_prompt_length = config.get("max_prompt_length", 1024)
-        self.max_response_length = config.get("max_response_length", 3072) # only used in case log_prob_flag=True
+        self.max_response_length = config.get("max_response_length", 3072) # only used in case log_prob_from_chat=True
         self.return_raw_chat = config.get("return_raw_chat", False)
         self.return_full_prompt = config.get("return_full_prompt", False)
         self.truncation = config.get("truncation", "error")
@@ -119,7 +121,10 @@ class RLHFDataset(Dataset):
         self.filter_prompts = config.get("filter_prompts", True)
         self.serialize_dataset = False
         self.return_multi_modal_inputs = config.get("return_multi_modal_inputs", True)
-        self.log_prob_flag = log_prob_flag
+        
+        # flags for special data loading
+        self.log_prob_from_chat = log_prob_from_chat
+        self.log_prob_from_rollouts_dir = log_prob_from_rollouts_dir
 
         self._download()
         self._read_files_and_tokenize()
@@ -135,16 +140,19 @@ class RLHFDataset(Dataset):
         dataframes = []
         for parquet_file in self.data_files:
             # read parquet files and cache
-            if self.log_prob_flag:
+            if self.log_prob_from_chat or \
+                self.log_prob_from_rollouts_dir:
                 dataframe = datasets.load_dataset("json", data_files=parquet_file)["train"] # logprob are stored as jsonl for fast iteration.
             else:
                 dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
-                
             dataframes.append(dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 
         print(f"dataset len: {len(self.dataframe)}")
 
+        if self.log_prob_from_rollouts_dir:
+            return # don't have to filter out long prompts.
+        
         self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
 
     def maybe_filter_out_long_prompts(self, dataframe: datasets.Dataset = None):
@@ -228,77 +236,210 @@ class RLHFDataset(Dataset):
 
         return messages
 
+    def get_item_from_rollouts_dir_source(self, row_dict):
+        """
+            Easier, because we've already applied the tokenizers etc onto the data.
+            Just have to re-tokenize and calculate the masks.
+        """
+        question, response = row_dict['input'], row_dict['output']
+
+        prompt_tokenized = self.tokenizer(question, return_tensors='pt', add_special_tokens=False)
+        response_tokenized = self.tokenizer(response, return_tensors='pt', add_special_tokens=False)
+
+        prompt_input_ids = prompt_tokenized.pop("input_ids")
+        prompt_attention_mask = prompt_tokenized.pop("attention_mask")
+        response_input_ids = response_tokenized.pop('input_ids')
+        response_attention_mask = response_tokenized.pop('attention_mask')
+
+        prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
+            input_ids=prompt_input_ids,
+            attention_mask=prompt_attention_mask,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        response_input_ids, response_attention_mask = verl_F.postprocess_data(
+            input_ids=response_input_ids,
+            attention_mask=response_attention_mask,
+            max_length=self.max_response_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=False,
+            truncation=self.truncation,
+        )
+
+        full_input_ids = torch.cat([prompt_input_ids, response_input_ids], dim=-1)
+        full_attention_mask = torch.cat([prompt_attention_mask, response_attention_mask], dim=-1)
+        full_position_ids = compute_position_id_with_mask(full_attention_mask)
+
+        tensors = {
+            'input_ids' : full_input_ids.squeeze(),
+            'attention_mask' : full_attention_mask.squeeze(),
+            'position_ids' : full_position_ids.squeeze(),
+            'prompts' : prompt_input_ids.squeeze(),
+            'responses' : response_input_ids.squeeze(),
+            'response_mask' : response_attention_mask.squeeze()
+        }
+        non_tensors = {
+            'data_global_step' :  row_dict['step'],
+            'input' : question,
+            'output' : response,
+            'score' :  row_dict['score'],
+            'reward' : row_dict['reward']
+        }
+
+        return {**tensors, **non_tensors}
+    
+    def get_item_from_chat_with_suffix_source(self, row_dict):
+        """
+            chat with suffix file schema:
+
+            prompt "Whats 2+2?"
+            reponse: "The answer is of course"
+            suffix: "4"
+            other: ...
+
+            we want full prompt to be:
+                "\n\nsystem...Whats 2+2? Lets think ...\nassistant:\nThe answer is of course 4"
+            
+            and a response mask:
+                padding - prompt - instruction following - reponse - suffix - padding
+                0           0           0                   0           1       0
+        """
+        messages = self._build_messages(row_dict)        
+        suffix = row_dict.pop('suffix')
+        instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
+
+        # build in-distribution chat
+        prompt, _ = messages
+        prompt['content'] += " " + instruction_following
+
+        raw_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_special_tokens=False)
+        raw_prompt = raw_prompt[:raw_prompt.rindex(self.tokenizer.eos_token)] # remove everything after (including) eos token            
+        prompt_tokenized = self.tokenizer(raw_prompt, return_tensors='pt', add_special_tokens=False)
+        suffix_tokens = self.tokenizer(suffix, return_tensors='pt', add_special_tokens=False)
+
+        prompt_input_ids = prompt_tokenized.pop("input_ids")
+        prompt_attention_mask = prompt_tokenized.pop("attention_mask")
+        suffix_input_ids = suffix_tokens.pop('input_ids')
+        suffix_attention_mask = suffix_tokens.pop('attention_mask')
+
+        prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
+            input_ids=prompt_input_ids,
+            attention_mask=prompt_attention_mask,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        suffix_input_ids, suffix_attention_mask = verl_F.postprocess_data(
+            input_ids=suffix_input_ids,
+            attention_mask=suffix_attention_mask,
+            max_length=self.max_response_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=False,
+            truncation=self.truncation,
+        )
+
+        full_input_ids = torch.cat([prompt_input_ids, suffix_input_ids], dim=-1)
+        full_attention_mask = torch.cat([prompt_attention_mask, suffix_attention_mask], dim=-1)
+        full_position_ids = compute_position_id_with_mask(full_attention_mask)
+
+        tensors = {
+            'input_ids' : full_input_ids.squeeze(),
+            'attention_mask' : full_attention_mask.squeeze(),
+            'position_ids' : full_position_ids.squeeze(),
+            'prompts' : prompt_input_ids.squeeze(),
+            'responses' : suffix_input_ids.squeeze(),
+            'response_mask' : suffix_attention_mask.squeeze()
+        }
+        non_tensors = {
+            **row_dict
+        }
+        return {**tensors, **non_tensors}
+    
+    def get_item_from_chat_source(self, row_dict):
+        """
+            chat file schema:
+
+            prompt: [{"role": "user", "content": "..."},
+                    {"role": "assistant", "content": "..."}]
+            other: ...
+
+            We want full prompt to be the full chat up to and including the assistant response:
+                "\n\nsystem...user prompt...\nassistant:\nresponse..."
+
+            Response mask:
+                padding - prompt - response - padding
+                0           0         1          0
+        """
+        messages = self._build_messages(row_dict)
+        prompt, response = messages  # prompt is user message, response is assistant message
+
+        # Tokenize separately for clean masks
+        prompt_only = self.tokenizer.apply_chat_template([prompt], tokenize=False, add_special_tokens=False, add_generation_prompt=True)
+        prompt_only_tokenized = self.tokenizer(prompt_only, return_tensors='pt', add_special_tokens=False)
+        response_tokenized = self.tokenizer(response['content'], return_tensors='pt', add_special_tokens=False)
+
+        prompt_input_ids = prompt_only_tokenized.pop("input_ids")
+        prompt_attention_mask = prompt_only_tokenized.pop("attention_mask")
+        response_input_ids = response_tokenized.pop("input_ids")
+        response_attention_mask = response_tokenized.pop("attention_mask")
+
+        # Postprocess (pad, truncate)
+        prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
+            input_ids=prompt_input_ids,
+            attention_mask=prompt_attention_mask,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        response_input_ids, response_attention_mask = verl_F.postprocess_data(
+            input_ids=response_input_ids,
+            attention_mask=response_attention_mask,
+            max_length=self.max_response_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=False,
+            truncation=self.truncation,
+        )
+
+        # Concatenate prompt + response
+        full_input_ids = torch.cat([prompt_input_ids, response_input_ids], dim=-1)
+        full_attention_mask = torch.cat([prompt_attention_mask, response_attention_mask], dim=-1)
+        full_position_ids = compute_position_id_with_mask(full_attention_mask)
+
+        tensors = {
+            'input_ids': full_input_ids.squeeze(),
+            'attention_mask': full_attention_mask.squeeze(),
+            'position_ids': full_position_ids.squeeze(),
+            'prompts': prompt_input_ids.squeeze(),
+            'responses': response_input_ids.squeeze(),
+            'response_mask': response_attention_mask.squeeze(),
+        }
+        non_tensors = {
+            **row_dict
+        }
+
+        return {**tensors, **non_tensors}
+    
     def __getitem__(self, item):
         """
         Note that we also return the raw_input_ids so that it can be combined with other chat template
         """
         row_dict: dict = self.dataframe[item]
+
+        if self.log_prob_from_rollouts_dir:
+            return self.get_item_from_rollouts_dir_source(row_dict)
+        elif self.log_prob_from_chat:
+            if 'suffix' in row_dict:
+                return self.get_item_from_chat_with_suffix_source(row_dict)
+            else:
+                return self.get_item_from_chat_source(row_dict)
+        
         messages = self._build_messages(row_dict)
         model_inputs = {}
         
-        if self.log_prob_flag: # early exit for custom behaviour.
-            """
-                prompt "Whats 2+2?"
-                reponse: "THe answer is of course"
-                suffix: "4"
-
-                we want full prompt to be:
-                    "\n\nsystem...Whats 2+2? Lets think ...\nassistant:\nThe answer is of course 4"
-                
-                and a response mask:
-                    padding - prompt - instruction following - reponse - suffix - padding
-                    0           0           0                   0           1       0
-
-                
-            """
-            suffix = row_dict.pop('suffix')
-            instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
-
-            # build in-distribution chat
-            prompt, response = messages
-            prompt['content'] += " " + instruction_following
-
-            raw_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_special_tokens=False)
-            raw_prompt = raw_prompt[:raw_prompt.rindex(self.tokenizer.eos_token)] # remove everything after (including) eos token            
-            prompt_tokenized = self.tokenizer(raw_prompt, return_tensors='pt', add_special_tokens=False)
-            suffix_tokens = self.tokenizer(suffix, return_tensors='pt', add_special_tokens=False)
-
-            prompt_input_ids = prompt_tokenized.pop("input_ids")
-            prompt_attention_mask = prompt_tokenized.pop("attention_mask")
-            suffix_input_ids = suffix_tokens.pop('input_ids')
-            suffix_attention_mask = suffix_tokens.pop('attention_mask')
-
-            prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
-                input_ids=prompt_input_ids,
-                attention_mask=prompt_attention_mask,
-                max_length=self.max_prompt_length,
-                pad_token_id=self.tokenizer.pad_token_id,
-                left_pad=True,
-                truncation=self.truncation,
-            )
-            suffix_input_ids, suffix_attention_mask = verl_F.postprocess_data(
-                input_ids=suffix_input_ids,
-                attention_mask=suffix_attention_mask,
-                max_length=self.max_response_length,
-                pad_token_id=self.tokenizer.pad_token_id,
-                left_pad=False,
-                truncation=self.truncation,
-            )
-
-            full_input_ids = torch.cat([prompt_input_ids, suffix_input_ids], dim=-1)
-            full_attention_mask = torch.cat([prompt_attention_mask, suffix_attention_mask], dim=-1)
-            full_position_ids = compute_position_id_with_mask(full_attention_mask)
-
-            return_dict = {
-                'input_ids' : full_input_ids.squeeze(),
-                'attention_mask' : full_attention_mask.squeeze(),
-                'position_ids' : full_position_ids.squeeze(),
-                'prompts' : prompt_input_ids.squeeze(),
-                'responses' : suffix_input_ids.squeeze(),
-                'response_mask' : suffix_attention_mask.squeeze()
-            }
-            return return_dict
-
         if self.processor is not None:
             from verl.utils.dataset.vision_utils import process_image, process_video
 
@@ -424,10 +565,6 @@ class RLHFDataset(Dataset):
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         row_dict["interaction_kwargs"] = interaction_kwargs
-
-        # for logprob generation:
-        #   - separate prompt and response
-        #   - set response attention mask
         return row_dict
 
     def __getstate__(self):

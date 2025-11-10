@@ -29,9 +29,11 @@ from verl import DataProto
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
-    compute_timing_metrics,
-    reduce_metrics,
+    compute_timing_metrics
 )
+
+from verl.trainer.ppo.core_algos import agg_entropy
+from verl.utils.metric import reduce_metrics
 from verl.trainer.ppo.ray_trainer import (
     AdvantageEstimator,
     RayPPOTrainer,
@@ -263,6 +265,12 @@ class RayEntropyTrainer(RayPPOTrainer):
                     # recompute old_log_probs
                     with simple_timer("old_log_prob", timing_raw):
                         old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                        entropys = old_log_prob.batch["entropys"]
+                        response_masks = batch.batch["response_mask"]
+                        entropy_agg = agg_entropy(mat=entropys, mask=response_masks)
+                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                        metrics.update(old_log_prob_metrics)
+
                         batch = batch.union(old_log_prob)
 
                     if self.use_reference_policy:

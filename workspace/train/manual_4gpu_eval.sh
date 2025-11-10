@@ -50,11 +50,11 @@ brumo2025=/u/rfechner/data/brumo_2025/test.parquet
 cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
-project_name="manual_1gpu"
-experiment_name="llama_3.2_1b_instruct__grpo"
 
 echo "Logged into huggingface"
-CHECKPOINT_DIR="/ptmp/rfechner/out/${project_name}/${experiment_name}"
+CHECKPOINT_DIR="/ptmp/rfechner/out/eval_test/llama_3.2_1b_instruct__grpo"
+trainer_resume_mode="resume_path"
+trainer_resume_path="/ptmp/rfechner/out/dryrun/llama_3.2_1b_instruct__grpo/global_step_5"
 
 export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \
@@ -112,15 +112,16 @@ python -u -m verl.trainer.main_ppo \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
     +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
     +trainer.compute_logprob_batch_size=2 \
-    trainer.resume_mode=auto \
+    trainer.resume_mode=${trainer_resume_mode} \
+    trainer.resume_from_path=${trainer_resume_path} \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
-    trainer.project_name=${project_name} \
+    trainer.project_name="eval_test" \
     trainer.logger='["console", "file"]' \
-    trainer.val_before_train=false \
-    trainer.n_gpus_per_node=1 \
+    trainer.val_before_train=true \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
-    trainer.save_freq=1 \
-    trainer.test_freq=1 \
+    trainer.save_freq=10 \
+    trainer.test_freq=2 \
     +trainer.remove_previous_ckpt_in_save=false \
-    trainer.total_epochs=2 \
-    trainer.experiment_name=${exp_name}
+    trainer.total_epochs=10 \
+    trainer.experiment_name="llama_3.2_1b_instruct__grpo"
