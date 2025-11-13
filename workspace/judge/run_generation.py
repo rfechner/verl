@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 from typing import *
 
 from workspace.judge.taxonomy import Taxonomy
-from workspace.judge.prompt_dataset import ReasoningStrategy_aime25, ReasoningStrategy_gsm8k, ReasoningType_gsm8k
+from workspace.judge.prompt_dataset import ReasoningStrategy_aime25, ReasoningStrategy_gsm8k, ReasoningType_gsm8k, EIC_ErrorTypes_gsm8k
 
 # ---------------------
 # Prompt template
@@ -61,7 +61,21 @@ def simple_parse_fn(outputs: list[str]) -> list[str | None]:
     return ret
 
 OUT_DIR = "/ptmp/rfechner/out/generated_behaviours/"
+datasets_contraint_pairs = [
+    (ReasoningType_gsm8k, constraints_for_generation_with_reasoning_types),
+    (ReasoningStrategy_gsm8k, constraints_for_generation_with_reasoning_types),
+    (EIC_ErrorTypes_gsm8k, constraints_for_generation_with_error_types)
+]
 os.makedirs(OUT_DIR, exist_ok=True)
+def print_memory(label=""):
+    """Prints current GPU memory usage across all devices."""
+    print(f"\n[Memory Report] {label}")
+    for i in range(torch.cuda.device_count()):
+        allocated = torch.cuda.memory_allocated(i) / 1e9
+        reserved = torch.cuda.memory_reserved(i) / 1e9
+        total = torch.cuda.get_device_properties(i).total_memory / 1e9
+        print(f"  GPU {i}: Allocated={allocated:.2f} GB | Reserved={reserved:.2f} GB | Total={total:.2f} GB")
+    print("-" * 60)
 
 # ---------------------
 # Main
@@ -72,25 +86,33 @@ if __name__ == "__main__":
     num_gpus = torch.cuda.device_count()
 
     print(f"Found {num_gpus} GPUs.")
-
+    print_memory("Before model load")
     
-    model_name = "Qwen/Qwen3-8B"
+    model_name = "openai/gpt-oss-20b"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = ReasoningType_gsm8k(tokenizer=tokenizer, prompt_fn=regular, constraint=constraints_for_generation_with_reasoning_types)
+    max_memory = {
+        0: "38GiB",
+        1: "38GiB",
+        2: "38GiB",
+        3: "38GiB",
+    }
 
     # Load model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="auto"
+        device_map="auto",
+        max_memory=max_memory,
+        dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
     )
-
+    print_memory("After model load")
     batch_size = 1
-    # Collate function
+    
     def collate_fn(batch):
         # flatten all behaviours across samples
         input_ids = [b for item in batch for b in item["input_ids"]]
@@ -107,48 +129,44 @@ if __name__ == "__main__":
             "input_ids": padded_input_ids,
             "attention_mask": padded_attention_mask,
         }
+    
+    for dataset_cls, constraint in datasets_contraint_pairs:
+        print(f'Processing: {dataset_cls.__name__}')
+        dataset = dataset_cls(tokenizer=tokenizer, prompt_fn=regular, constraint=constraint)
+        dataloader = DataLoader(dataset, collate_fn=collate_fn, batch_size=batch_size)
+        categories = dataset.taxonomy.categories.keys()
 
-    dataloader = DataLoader(dataset, collate_fn=collate_fn, batch_size=batch_size)
-    categories = dataset.taxonomy.categories.keys()
 
+        # Prepare output file path
+        model_name_safe = model_name.replace('/', '--')
+        out_path = os.path.join(OUT_DIR, f"{dataset.__class__.__name__}__{model_name_safe}.jsonl")
 
-    # Prepare output file path
-    model_name_safe = model_name.replace('/', '--')
-    out_path = os.path.join(OUT_DIR, f"{dataset.__class__.__name__}__{model_name_safe}.jsonl")
+        # Open file for incremental JSONL writing
+        with open(out_path, "a", encoding="utf-8") as f:
+            model.eval()
+            with torch.no_grad():
+                for i, batch in enumerate(tqdm(dataloader), start=1):
+                    print_memory(f"Batch: {i}")
 
-    # Open file for incremental JSONL writing
-    with open(out_path, "a", encoding="utf-8") as f:
-        model.eval()
-        with torch.no_grad():
-            for i, batch in enumerate(tqdm(dataloader), start=1):
-                input_ids = batch["input_ids"].to(model.device)
-                attention_mask = batch["attention_mask"].to(model.device)
-                
-                # Generate model predictions
-                outputs = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=2048,
-                    do_sample=True
-                )
-                decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                parsed = simple_parse_fn(decoded)
+                    input_ids = batch["input_ids"].to(model.device)
+                    attention_mask = batch["attention_mask"].to(model.device)
+                    
+                    # Generate model predictions
+                    outputs = model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=2048,
+                        do_sample=True
+                    )
+                    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                    parsed = simple_parse_fn(decoded)
 
-                # Build the line object
-                line = {
-                    "batch_index": i,
-                    "data": parsed
-                }
+                    # Build the line object
+                    line = {
+                        "batch_index": i,
+                        "data": parsed
+                    }
 
-                # Write as one JSONL line
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
-                f.flush()
-
-    meta = {
-        "dataset": dataset.__class__.__name__,
-        "generated_by": model_name,
-        "taxonomy": dataset.taxonomy.categories
-    }
-
-    with open(os.path.join(OUT_DIR, f'{dataset.__class__.__name__}__{model_name_safe}.json')) as file:
-        json.dump(obj=meta, fp=file)
+                    # Write as one JSONL line
+                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                    f.flush()

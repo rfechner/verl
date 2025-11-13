@@ -158,7 +158,7 @@ aime25=/u/rfechner/data/aime25/test.parquet
 brumo2025=/u/rfechner/data/brumo_2025/test.parquet
 cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
-val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
+default_val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
 clip_ratio_low=1
 clip_ratio_high=1
@@ -189,11 +189,12 @@ python -u -m recipe.entropy.main_entropy \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
     data.train_files="$train_files" \
-    data.val_files="$val_files" \
+    data.val_files="${data_val_files:-$default_val_files}" \
     data.train_batch_size=$train_batch_size \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.truncation=${data_truncation} \
+    data.val_batch_size=${val_batch_size} \
     actor_rollout_ref.model.use_remove_padding=${actor_model_use_remove_padding} \
     actor_rollout_ref.model.use_fused_kernels=true \
     actor_rollout_ref.model.path=$model_path \

@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --job-name=prompt_eval
-#SBATCH --output=/u/rfechner/jobs/prompt_eval_%j.out   # Standard output file (%j expands to job ID)
-#SBATCH --error=/u/rfechner/jobs/prompt_eval_%j.err    # Standard error file (%j expands to job ID)
+#SBATCH --job-name=prompt_gen
+#SBATCH --output=/u/rfechner/jobs/prompt_gen_%j.out   # Standard output file (%j expands to job ID)
+#SBATCH --error=/u/rfechner/jobs/prompt_gen_%j.err    # Standard error file (%j expands to job ID)
 #SBATCH --nodes=1
 #SBATCH --partition=general                                 # main partition containing GPU nodes
 #SBATCH --constraint=gpu                                    # high bandwidth GPUs within general partition  
 #SBATCH --switches=1                                        # constraint on the topology -> we want adjacent nodes
 #SBATCH --ntasks-per-node=1                                 # Run the shell script as a single task on this node
-#SBATCH --cpus-per-task=18                                  # Allocate all CPUs on the node (Raven GPU nodes often have 72 cores, adjust if different)
-#SBATCH --gres=gpu:a100:1                                   
+#SBATCH --cpus-per-task=64                                  # Allocate all CPUs on the node (Raven GPU nodes often have 72 cores, adjust if different)
+#SBATCH --gres=gpu:a100:4                                   
 #SBATCH --time=23:59:00                                     # Maximum wall clock time (e.g., 24 hours). Adjust as needed.
-#SBATCH --mem=50000                                        # Request all available memory on the node. Can be specific e.g., "200G".
+#SBATCH --mem=500000                                        # Request all available memory on the node. Can be specific e.g., "200G".
 #SBATCH --chdir=./
 
 echo "========================================================"

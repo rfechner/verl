@@ -27,9 +27,10 @@ def create_eic_gsm8k(df : pd.DataFrame):
     with open('/u/rfechner/data/eic_gsm8k_generated/delta.jsonl', 'w') as file:
         df.to_json(file, lines=True, orient='records')
 
-def create_reasoning_strategy_gsm8k(df : pd.DataFrame):
-    with open('/ptmp/rfechner/out/generated_behaviours/ReasoningStrategy_gsm8k__Qwen--Qwen3-8B.jsonl', 'r') as file:
+def create_reasoning_strategy_gsm8k(df : pd.DataFrame, jsonfile : str):
+    with open(jsonfile, 'r') as file:
         rt = pd.read_json(file, lines=True)
+    model_name = jsonfile.split('__')[-1]
 
     categories = {
             "Pattern Recognition": {
@@ -84,13 +85,14 @@ def create_reasoning_strategy_gsm8k(df : pd.DataFrame):
     os.makedirs(path, exist_ok=True)
 
     print(df.describe())
-    print('Writing to: ', os.path.join(path, 'deltas.jsonl'))
-    with open(os.path.join(path, 'deltas.jsonl'), 'w') as file:
+    print('Writing to: ', os.path.join(path, f'{model_name}-deltas.jsonl'))
+    with open(os.path.join(path, f'{model_name}-deltas.jsonl'), 'w') as file:
         df.to_json(path_or_buf=file, lines=True, orient='records')
 
-def create_reasoning_types_gsm8k(df : pd.DataFrame):
-    with open('/ptmp/rfechner/out/generated_behaviours/ReasoningType_gsm8k__Qwen--Qwen3-8B.jsonl', 'r') as file:
+def create_reasoning_types_gsm8k(df : pd.DataFrame, jsonfile : str):
+    with open(jsonfile, 'r') as file:
         rt = pd.read_json(file, lines=True)
+    model_name = jsonfile.split('__')[-1]
 
     categories = {
             "Deductive Reasoning" : {
@@ -140,8 +142,8 @@ def create_reasoning_types_gsm8k(df : pd.DataFrame):
     os.makedirs(path, exist_ok=True)
 
     print(df.describe())
-    print('Writing to: ', os.path.join(path, 'deltas.jsonl'))
-    with open(os.path.join(path, 'deltas.jsonl'), 'w') as file:
+    print('Writing to: ', os.path.join(path, f'{model_name}-deltas.jsonl'))
+    with open(os.path.join(path, f'{model_name}-deltas.jsonl'), 'w') as file:
         df.to_json(path_or_buf=file, lines=True, orient='records')
 
 if __name__ == '__main__':
@@ -149,7 +151,11 @@ if __name__ == '__main__':
     with open('/u/rfechner/data/eic_gsm8k_deduplicated/test.parquet', 'rb') as file:
         df = pd.read_parquet(file)
 
-    create_eic_gsm8k(df.copy())
-    create_reasoning_strategy_gsm8k(df.copy())
-    create_reasoning_types_gsm8k(df.copy())
+    jsonfile_errors = '/ptmp/rfechner/out/generated_behaviours/EIC_ErrorTypes_gsm8k__meta-llama--Llama-3.1-8B-Instruct.jsonl'
+    jsonfile_reasoning_strategies = '/ptmp/rfechner/out/generated_behaviours/ReasoningStrategy_gsm8k__meta-llama--Llama-3.1-8B-Instruct.jsonl'
+    jsonfile_reasoning_types = "/ptmp/rfechner/out/generated_behaviours/ReasoningType_gsm8k__meta-llama--Llama-3.1-8B-Instruct.jsonl"
+
+    # create_eic_gsm8k(df.copy())
+    create_reasoning_strategy_gsm8k(df.copy(), jsonfile=jsonfile_reasoning_strategies)
+    create_reasoning_types_gsm8k(df.copy(), jsonfile=jsonfile_reasoning_types)
 

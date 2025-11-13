@@ -47,7 +47,7 @@ def default_compute_score(
 
     # weird interaction: When evaluating on more than one of these if branches, we're encountering error. math_reward.compuite_score and
     # math_dapo.compute_score return different types.
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500", "math-ai/math500", "math-ai/aime25"] \
+    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500", "math-ai/math500", "math-ai/aime25", "gsm8k_distilled_from_eic_gsm8k"] \
         or data_source.startswith("MathArena"):
         from . import math_reward
 

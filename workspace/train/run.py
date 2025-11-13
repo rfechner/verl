@@ -50,6 +50,7 @@ models = {
     'r1-qwen-medium' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
     'r1-qwen-large' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", 
     'r1-llama-large' : "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    # 'gpt-oss' : 'openai/gpt-oss-20b' # currently not working because of quantization errors.
 }
 
 def main():
@@ -88,6 +89,9 @@ def main():
     parser.add_argument("--lpfile", type=str, default=None, help="Path to jsonl file containing chats. Note: This can only be set in case we're evaluating.")
     parser.add_argument("--lpdir", type=str, default=None, help="Path to directory to load `X_rollout.jsonl` files from to calculate logprobs.")
     parser.add_argument("--dryrun", action='store_true', default=False, help='Whether to dryrun the current experiment. This will terminate the script before delegating to sbatch.')
+    parser.add_argument("--val_batchsize", type=int, default=512) # If set to none, whole batch is sent to inference engine.
+    parser.add_argument("--val_data", type=str, default=None, help='Validation file. If not provided this will default to Math500 + MathArena datasets.')
+
     args = parser.parse_args()
 
     # ======== Argument Verification ========
@@ -128,8 +132,6 @@ def main():
     if args.eval:
         if args.cp and args.cpdir:
             raise ValueError("Cannot load from checkpoint --cp and checkpoint directory --cpdir")
-        if (not args.cp) and (not args.cpdir):
-            raise ValueError("Found --eval, but no checkpoint to evaluate from was given. Please specify --cp or --cpdir")
         if args.no_logprobs and args.no_validation:
             raise ValueError("Both, --no-logprobs and --no-validation was set.")
     
@@ -214,7 +216,7 @@ def main():
         
         # Where to dump rollout generations (placed next to checkpoints by default)
         "trainer_rollout_data_dir" : os.path.join(checkpoint_dir, "train_jsonl"),
-        
+
         "model_path": args.model,
         "train_files": args.train_file,
         "identifier": args.identifier or "",
@@ -240,6 +242,10 @@ def main():
         "loss_mode" : args.method.replace('-', '_') if args.method in ['gspo', 'kl-cov', 'clip-cov'] else 'vanilla',
         "entropy_coeff" : 0.001 if args.method == 'entropy_reg' else 0
     }
+
+    # Parameters which may be set or unset to trigger default behaviours
+    config.update({"val_batch_size" : args.val_batchsize} if args.val_batchsize else {})
+    config.update({'data_val_files' : args.val_data} if args.val_data else {})
 
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({

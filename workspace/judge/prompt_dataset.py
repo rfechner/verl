@@ -179,7 +179,6 @@ class ReasoningStrategy_gsm8k(PromptDatasetForGeneration):
 
         super().__init__(tokenizer=tokenizer, prompt_fn=prompt_fn, taxonomy=taxonomy, data_path="/u/rfechner/data/eic_gsm8k_deduplicated/test.parquet", keymap=keymap, example= example, constraint= constraint, **kwargs)
 
-
 class ReasoningType_gsm8k(PromptDatasetForGeneration):
     def __init__(self, tokenizer, prompt_fn : Callable, example : str | None = None, constraint : str | None = None, generation_prompt=True, **kwargs):
         """
@@ -238,3 +237,91 @@ class ReasoningType_gsm8k(PromptDatasetForGeneration):
             example = generation_examples
 
         super().__init__(tokenizer=tokenizer, prompt_fn=prompt_fn, taxonomy=taxonomy, data_path="/u/rfechner/data/eic_gsm8k_deduplicated/test.parquet", keymap=keymap, example= example, constraint= constraint, **kwargs)
+
+
+class EIC_ErrorTypes_gsm8k(PromptDatasetForGeneration):
+    def __init__(self, tokenizer, prompt_fn: Callable, example: str | None = None, constraint: str | None = None, generation_prompt=True, **kwargs):
+        """
+            GSM8K dataset augmented with EIC (Error Interpretation and Classification) Types.
+        """
+        taxonomy = EIC_Taxonomy(
+            example=None  # can embed a sample later if needed
+        )
+
+        keymap = {
+            "question": "prompt",
+            "ground_truth_answer": "correct_solution"
+        }
+
+        default_question = "A bakery sold 48 muffins on Monday and twice as many on Tuesday. How many muffins did they sell in total?"
+        default_ground_truth_answer = (
+            "On Tuesday, they sold twice as many muffins as Monday: 2 × 48 = 96. "
+            "So in total: 48 + 96 = 144. The bakery sold \\boxed{144} muffins."
+        )
+
+        prefix_agent_response = (
+            "I'm asked to augment the given ground truth response. "
+            "First, let's think about the error type I need to inject: {}."
+        )
+
+        # Example augmentations for each error type
+        generation_examples = [
+            (
+                default_question,
+                default_ground_truth_answer,
+                "Calculation Error",
+                prefix_agent_response.format("Calculation Error")
+                + " To simulate a Calculation Error, I'll make a small arithmetic mistake during computation."
+                "#### On Tuesday, they sold twice as many muffins as Monday: 2 × 48 = 94. "
+                "Then, total muffins = 48 + 94 = 142. The bakery sold \\boxed{142} muffins."
+            ),
+            (
+                default_question,
+                default_ground_truth_answer,
+                "Context Value Error",
+                prefix_agent_response.format("Context Value Error")
+                + " To simulate a Context Value Error, I'll misuse a contextual quantity from the problem."
+                "#### I'm counting two more than 48 + 2 = 50 muffins on Tuesday. "
+                "Then total = 48 + 50 = 98. So I conclude \\boxed{98} muffins."
+            ),
+            (
+                default_question,
+                default_ground_truth_answer,
+                "Hallucination",
+                prefix_agent_response.format("Hallucination")
+                + " To simulate a Hallucination error, I'll add an unrelated or fictitious detail."
+                "#### The bakery also sold 20 cupcakes. "
+                "So total muffins + cupcakes = 48 + 96 + 20 = 164. The answer is \\boxed{164}."
+            ),
+            (
+                default_question,
+                default_ground_truth_answer,
+                "Operator Error",
+                prefix_agent_response.format("Operator Error")
+                + " To simulate an Operator Error, I'll apply the wrong arithmetic operator."
+                "#### On Tuesday: 48 ÷ 2 = 24 muffins. Total = 48 + 24 = 72. "
+                "Thus, I conclude \\boxed{72} muffins."
+            ),
+            (
+                default_question,
+                default_ground_truth_answer,
+                "Missing Step",
+                prefix_agent_response.format("Missing Step")
+                + " To simulate a Missing Step, I'll skip part of the reasoning."
+                "#### On Tuesday, twice as many → 96. Therefore, total is \\boxed{96}."
+            )
+        ]
+
+        if not example and generation_prompt:
+            example = generation_examples
+
+        super().__init__(
+            tokenizer=tokenizer,
+            prompt_fn=prompt_fn,
+            taxonomy=taxonomy,
+            data_path="/u/rfechner/data/eic_gsm8k_deduplicated/test.parquet",
+            keymap=keymap,
+            example=example,
+            constraint=constraint,
+            **kwargs
+        )
