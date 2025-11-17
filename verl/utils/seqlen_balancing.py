@@ -188,7 +188,8 @@ def get_seqlen_balanced_partitions(seqlen_list: list[int], k_partitions: int, eq
         assert seen_idx == set(range(len(seqlen_list)))
         return sorted_partitions
 
-    partitions = karmarkar_karp(seqlen_list=seqlen_list, k_partitions=k_partitions, equal_size=equal_size)
+    # NOTE: sometimes (?) k_partitions is float instead of int. In this case, we have to cast to int from float.
+    partitions = karmarkar_karp(seqlen_list=seqlen_list, k_partitions=int(k_partitions), equal_size=equal_size)
     return _check_and_sort_partitions(partitions)
 
 

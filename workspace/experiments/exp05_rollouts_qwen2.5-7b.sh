@@ -1,5 +1,7 @@
 #!/bin/bash
 cd /u/rfechner
+
+# This script accesses each checkpoint for each method from "exp05_train_qwen2.5-7b.sh" and collects 256 rollouts for each validation question. Note: batchsize reduced to avoid OOM
 python verl/workspace/train/run.py --project-name exp05_rollouts_qwen2.5-7b --method grpo      --model qwen2.5-large   --tp 4 --flashinfer --valn 256 --val_batchsize 32 --no-logprobs --eval --cpdir "/ptmp/rfechner/out/exp05_train_qwen2.5-7b/qwen2.5_7b__grpo"
 python verl/workspace/train/run.py --project-name exp05_rollouts_qwen2.5-7b --method dapo      --model qwen2.5-large   --tp 4 --flashinfer --valn 256 --val_batchsize 32 --no-logprobs --eval --cpdir "/ptmp/rfechner/out/exp05_train_qwen2.5-7b/qwen2.5_7b__dapo"
 python verl/workspace/train/run.py --project-name exp05_rollouts_qwen2.5-7b --method kl-cov    --model qwen2.5-large   --tp 4 --flashinfer --valn 256 --val_batchsize 32 --no-logprobs --eval --cpdir "/ptmp/rfechner/out/exp05_train_qwen2.5-7b/qwen2.5_7b__kl-cov"

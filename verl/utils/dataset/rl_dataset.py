@@ -32,7 +32,7 @@ import verl.utils.torch_functional as verl_F
 from verl.utils.model import compute_position_id_with_mask
 
 logger = logging.getLogger(__name__)
-
+datasets.disable_caching()
 
 def collate_fn(data_list: list[dict]) -> dict:
     """
