@@ -50,11 +50,14 @@ brumo2025=/u/rfechner/data/brumo_2025/test.parquet
 cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
+project_name="debug-$(date +'%Y-%m-%d-%H-%M-%S')"
+experiment_name="llama_3.2_1b_instruct__grpo"
+#single_logprob_file="/u/rfechner/data/eic_gsm8k_generated/delta.jsonl" #"/u/rfechner/verl/workspace/chats.jsonl"
+logprob_dir=false #"/ptmp/rfechner/out/manual_1gpu/llama_3.2_1b_instruct__grpo/val_jsonl/"
+reasoning_strategies="/u/rfechner/data/incomplete_reasoning_strategies/llama-deltas-3.5k.jsonl"
 
 echo "Logged into huggingface"
-CHECKPOINT_DIR="/ptmp/rfechner/out/eval_test/llama_3.2_1b_instruct__grpo"
-trainer_resume_mode="resume_path"
-trainer_resume_path="/ptmp/rfechner/out/dryrun/llama_3.2_1b_instruct__grpo/global_step_5"
+CHECKPOINT_DIR="/ptmp/rfechner/out/${project_name}/${experiment_name}"
 
 export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \
@@ -67,6 +70,7 @@ python -u -m verl.trainer.main_ppo \
     data.max_prompt_length=1024 \
     data.max_response_length=3072 \
     data.truncation=left \
+    data.filter_overlong_prompts=false \
     actor_rollout_ref.model.use_remove_padding=true \
     actor_rollout_ref.model.use_fused_kernels=true \
     actor_rollout_ref.model.path="meta-llama/Llama-3.2-1B-Instruct" \
@@ -110,18 +114,21 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
-    +trainer.compute_logprob_batch_size=2 \
-    trainer.resume_mode=${trainer_resume_mode} \
-    trainer.resume_from_path=${trainer_resume_path} \
+    +trainer.compute_logprob_from_file=$reasoning_strategies \
+    +trainer.compute_logprob_from_rollout_dir=$logprob_dir \
+    +trainer.compute_logprob_batch_size=64 \
+    +trainer.skip_logprobs=false \
+    +trainer.skip_validation=true \
+    trainer.val_only=true \
+    trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
-    trainer.project_name="eval_test" \
+    trainer.project_name=${project_name} \
     trainer.logger='["console", "file"]' \
     trainer.val_before_train=true \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
-    trainer.save_freq=10 \
-    trainer.test_freq=2 \
+    trainer.save_freq=1 \
+    trainer.test_freq=1 \
     +trainer.remove_previous_ckpt_in_save=false \
-    trainer.total_epochs=10 \
-    trainer.experiment_name="llama_3.2_1b_instruct__grpo"
+    trainer.total_epochs=2 \
+    trainer.experiment_name=${experiment_name}

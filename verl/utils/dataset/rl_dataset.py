@@ -386,6 +386,8 @@ class RLHFDataset(Dataset):
         response_input_ids = response_tokenized.pop("input_ids")
         response_attention_mask = response_tokenized.pop("attention_mask")
 
+        assert prompt_input_ids.dtype==torch.int64 and response_input_ids.dtype==torch.int64, "Tokenizer returned non-int input_ids. This usually means that there is either an empty prompt or response."
+
         # Postprocess (pad, truncate)
         prompt_input_ids, prompt_attention_mask = verl_F.postprocess_data(
             input_ids=prompt_input_ids,

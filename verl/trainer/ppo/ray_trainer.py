@@ -560,13 +560,11 @@ class RayPPOTrainer:
         lines = []
 
         for i, batch_dict in enumerate(self.logprob_dataloader):
-            # could i get input and output, as well as step of target checkpoint appended?
-            
+
             data: DataProto = DataProto.from_single_dict(batch_dict)
             with torch.no_grad(): # not necessary, as compute_log_prob doesn't accumulate grads, but lets be sure.
                 out = self.actor_rollout_wg.compute_log_prob(data)
             
-
             logprobs, entropys = out.batch['old_log_probs'], out.batch['entropys']
             rmpad_logprobs = [
                 lp[mask.bool()].cpu().tolist() for lp, mask in zip(logprobs, data.batch['response_mask'], strict=True)

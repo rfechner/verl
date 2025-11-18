@@ -125,6 +125,9 @@ def karmarkar_karp(seqlen_list: list[int], k_partitions: int, equal_size: bool):
             assert len(partition) * k_partitions == len(seqlen_list), (
                 f"{len(partition)} * {k_partitions} != {len(seqlen_list)}"
             )
+
+    # this should return a list[list[int]]. However, sometimes it returns floats as well.
+    assert all([all([isinstance(x, int) for x in xs]) for xs in partitions]), "Something went wrong: sequence balancing returned something not int."
     return partitions
 
 
@@ -175,7 +178,7 @@ def get_seqlen_balanced_partitions(seqlen_list: list[int], k_partitions: int, eq
         AssertionError: If any resulting partition is empty.
     """
     assert len(seqlen_list) >= k_partitions, f"number of items:[{len(seqlen_list)}] < k_partitions:[{k_partitions}]"
-
+    
     def _check_and_sort_partitions(partitions):
         assert len(partitions) == k_partitions, f"{len(partitions)} != {k_partitions}"
         seen_idx = set()
@@ -188,8 +191,8 @@ def get_seqlen_balanced_partitions(seqlen_list: list[int], k_partitions: int, eq
         assert seen_idx == set(range(len(seqlen_list)))
         return sorted_partitions
 
-    # NOTE: sometimes (?) k_partitions is float instead of int. In this case, we have to cast to int from float.
-    partitions = karmarkar_karp(seqlen_list=seqlen_list, k_partitions=int(k_partitions), equal_size=equal_size)
+
+    partitions = karmarkar_karp(seqlen_list=seqlen_list, k_partitions=k_partitions, equal_size=equal_size)
     return _check_and_sort_partitions(partitions)
 
 
@@ -292,6 +295,7 @@ def rearrange_micro_batches(
     if min_num_micro_batch is not None:
         # used to support pp
         num_micro_batches = max(min_num_micro_batch, num_micro_batches)
+
     if dist.is_initialized() and same_micro_num_in_dp:
         num_micro_batches = torch.tensor([num_micro_batches], device=get_device_name())
         dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
@@ -302,6 +306,7 @@ def rearrange_micro_batches(
     seq_len_effective = seq_len_effective.tolist()
     assert num_micro_batches <= len(seq_len_effective)
 
+    num_micro_batches = int(num_micro_batches) # this flips to float sometimes?
     micro_bsz_idx = get_seqlen_balanced_partitions(seq_len_effective, num_micro_batches, equal_size=False)
 
     if use_dynamic_bsz_balance:
