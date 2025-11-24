@@ -482,6 +482,7 @@ class RayPPOTrainer:
             sampler=train_sampler,
         )
 
+        # make hook function to re-instantiate dataloader later.
         val_batch_size = self.config.data.val_batch_size  # Prefer config value if set
         if val_batch_size is None:
             val_batch_size = len(self.val_dataset)

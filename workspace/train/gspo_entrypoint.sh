@@ -163,7 +163,7 @@ hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 default_val_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
 
-# GSPO params
+# GSPO params.
 loss_agg_mode="seq-mean-token-mean"
 reward_manager=dapo
 use_kl_in_reward=false

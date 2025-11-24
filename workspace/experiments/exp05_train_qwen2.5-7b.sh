@@ -8,3 +8,6 @@ python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --metho
 python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method clip-cov  --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5
 python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method gtpo      --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5
 python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method grpo-s    --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5
+python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method gspo      --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5
+python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method drgrpo    --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5
+python verl/workspace/train/run.py --project-name exp05_train_qwen2.5-7b --method entropy_reg      --model qwen2.5-large   --tp 4 --flashinfer --valn 8 --no-logprobs --cont --epochs 30 --savefreq 10 --testfreq 5

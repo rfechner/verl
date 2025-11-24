@@ -43,6 +43,7 @@ from verl.trainer.ppo.ray_trainer import (
 )
 from verl.utils.profiler import marked_timer
 from verl.utils.rollout_skip import RolloutSkip
+from torch.utils.data import Subset, Dataset, DataLoader
 
 
 class RayDAPOTrainer(RayPPOTrainer):
@@ -70,6 +71,7 @@ class RayDAPOTrainer(RayPPOTrainer):
 
         self.global_steps = 0
         self.gen_steps = 0
+        self.solverates = {}
 
         # load checkpoint before doing anything
         self._load_checkpoint()
@@ -109,6 +111,25 @@ class RayDAPOTrainer(RayPPOTrainer):
         num_prompt_in_batch = 0
         num_gen_batches = 0
         for epoch in range(self.config.trainer.total_epochs):
+
+            # in case we need to drop solved questions, do so at start of epoch.
+            if self.config.algorithm.get('filter_solved', False) and len(self.solverates) > 0:
+                threshold = self.config.algorithm.get('filter_solved_threshold', -0.5)
+
+                # keep unsolved or low-solverate samples
+                drop_idx = set([
+                    i for i, v in self.solverates.items()
+                    if v >= threshold
+                ])
+
+                keep_idx = [
+                    i for i in range(len(self.train_dataloader.dataset)) if i not in drop_idx
+                ]
+
+                filt_ds = Subset(self.train_dataloader.dataset.dataframe, keep_idx)
+                self.train_dataloader.dataset.dataframe = filt_ds
+                self.solverates = {} # reset solverates.
+                
             for batch_dict in self.train_dataloader:
                 metrics = {}
 
@@ -267,6 +288,17 @@ class RayDAPOTrainer(RayPPOTrainer):
                             batch = batch[:traj_bsz]
 
                     # === Updating ===
+
+                    # ==== simple solverate update ====
+                    # We assume every example in the batch has a question id "qid"
+                    idx = new_batch.non_tensor_batch["index"]
+                    seq_rewards = new_batch.batch["token_level_scores"].sum(dim=-1).cpu().numpy()
+                    idx2rewards = {}
+                    for i, r in zip(idx, seq_rewards, strict=True):
+                        idx2rewards.setdefault(i, []).append(float(r))
+
+                    # compute mean reward per index and store into solverates
+                    self.solverates.update({i: float(sum(rs) / len(rs)) for i, rs in idx2rewards.items()})
 
                     batch.batch["response_mask"] = compute_response_mask(batch)
 

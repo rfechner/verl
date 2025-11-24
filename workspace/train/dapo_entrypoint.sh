@@ -175,6 +175,7 @@ filter_groups_metric=acc
 
 # delegates to the dapo trainer, which does the dynamic sampling.
 python -u -m recipe.dapo.main_dapo \
+    +algorithm.filter_solved=${algorithm_filter_solved:-false} \
     algorithm.adv_estimator=${algorithm_adv_estimator} \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \

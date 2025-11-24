@@ -5,6 +5,7 @@ import os
 import subprocess
 import json
 import pathlib
+import time
 
 from typing import Dict, List, Any
 from checkpoint_utils import handle_checkpoint_validation, handle_model_method_validation
@@ -17,7 +18,16 @@ from checkpoint_utils import handle_checkpoint_validation, handle_model_method_v
     There are some parameters which are only set INSIDE the shell scripts, such that we can, but musn't use every exported parameter. Additionally,
     there are some non-standart parameters which we have to set for some algorithms, it's better to hardcode these.
 """
+def assert_num_lines_mod_ngpus_iszero(path: str, num_gpus : int = 8) -> None:
+    assert path.endswith('jsonl'), "Only applicable for jsonl files"
+    
+    with open(path, "r") as f:
+        num_lines = sum(1 for _ in f)
 
+    if num_lines % num_gpus != 0:
+        raise ValueError("Number of lines in path isn't divided evenly by number of GPUs. This will cause verl to throw later on.")
+    return
+    
 def collect_export_vars(config: Dict[str, Any]) -> List[str]:
     out: List[str] = []
     for k, v in config.items():
@@ -82,7 +92,8 @@ def main():
     parser.add_argument("--testfreq", type=int, default=5)
     parser.add_argument("--nodes", type=int, default=2)
     parser.add_argument("--cp", type=str, default=None, help="Model Checkpoint to train/eval from. Specify 'global_step_X' directory.")
-
+    parser.add_argument("--train_batchsize", type=int, default=512)
+    
     # ======== EVAL OPTIONS ========
     parser.add_argument("--eval", action="store_true", help="Runs evaluation from given checkpoint. Needs --checkpoint to be specified")
     parser.add_argument("--cpdir", type=str, default=None, help="Model Checkpoint directory to load checkpoints from. Note: This can only be set in case we're evaluating.")
@@ -92,16 +103,24 @@ def main():
     parser.add_argument("--val_batchsize", type=int, default=512) # If set to none, whole batch is sent to inference engine.
     parser.add_argument("--val_data", type=str, default=None, help='Validation file. If not provided this will default to Math500 + MathArena datasets.')
 
+    # ======== TEMPORARY OPTIONS FOR TESTING ========
+    parser.add_argument("--filter-solved", action="store_true", help="Whether to drop solved (solverate > 1/4) samples from the dataframe on epoch beginning.")
+
     args = parser.parse_args()
 
     # ======== Argument Verification ========
 
+    if args.filter_solved:
+        if not args.method == "dapo":
+            raise ValueError("filter_solved currently only available on DAPO.")
+        
     # paths correct?
     if args.lpfile:
         if not os.path.isabs(args.lpfile):
             raise ValueError("Please give absolute path for validation.")
         if not os.path.isfile(args.lpfile):
             raise ValueError(f"Specified lpfile isn't a file: {args.lpfile}")
+        assert_num_lines_mod_ngpus_iszero(args.lpfile, args.nodes * 4)
         
     if args.lpdir:
         if not os.path.isabs(args.lpdir):
@@ -164,10 +183,23 @@ def main():
         if args.valn > 16:
             raise ValueError("Running training with too high number of validation rollouts.")
 
-    from huggingface_hub import login
-    login(token=open("/u/rfechner/.cache/huggingface/token").read().strip())
-    print("Logged into huggingface hub.")
+    
+    from huggingface_hub import HfFolder, login
+    from pathlib import Path
 
+    token_path = Path.home() / ".cache/huggingface/token"
+
+    # Check if a token is already stored
+    stored_token = HfFolder.get_token()
+
+    if stored_token is None:
+        print("Not logged in. Logging in...")
+        token = token_path.read_text().strip()
+        login(token=token)
+        print("Logged into Hugging Face Hub.")
+    else:
+        print("Already logged in.")
+        
     # Build experiment name (snake_case consistency: lowercase with underscores)
     base_model_name = os.path.basename(args.model).lower().replace("-", "_")
     if args.identifier:
@@ -246,7 +278,8 @@ def main():
     # Parameters which may be set or unset to trigger default behaviours
     config.update({"val_batch_size" : args.val_batchsize} if args.val_batchsize else {})
     config.update({'data_val_files' : args.val_data} if args.val_data else {})
-
+    config.update({"algorithm_filter_solved" : args.filter_solved} if args.filter_solved else {})
+    
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({
         # Environement flags
