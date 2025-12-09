@@ -105,6 +105,7 @@ def main():
 
     # ======== TEMPORARY OPTIONS FOR TESTING ========
     parser.add_argument("--filter-solved", action="store_true", help="Whether to drop solved (solverate > 1/4) samples from the dataframe on epoch beginning.")
+    parser.add_argument("--dapo-seq-reward", action="store_true", help="Whether to filter for sequence rewards instead of final reward. Currently only used acc.")
 
     args = parser.parse_args()
 
@@ -257,7 +258,7 @@ def main():
         "checkpoint_dir": checkpoint_dir,
         "tensor_model_parallel_size": args.tp,
         "rollout_val_n" : args.valn,
-        "train_batch_size": 512,
+        "train_batch_size": args.train_batchsize,
         "total_epochs": args.epochs,
         "max_prompt_length": 1024,
         "max_response_length": 3 * 1024,
@@ -279,7 +280,8 @@ def main():
     config.update({"val_batch_size" : args.val_batchsize} if args.val_batchsize else {})
     config.update({'data_val_files' : args.val_data} if args.val_data else {})
     config.update({"algorithm_filter_solved" : args.filter_solved} if args.filter_solved else {})
-    
+    config.update({"dapo_filter_groups_metric" : "seq_reward" if args.dapo_seq_reward else 'acc'})
+
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({
         # Environement flags

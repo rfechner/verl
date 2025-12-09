@@ -171,7 +171,7 @@ overlong_penalty_factor=1.0
 loss_agg_mode="token-mean"
 max_num_gen_batches=0 # generate indefinitely until we've got enough non-zero std samples in the batch.
 enable_filter_groups=True
-filter_groups_metric=acc
+filter_groups_metric=${dapo_filter_groups_metric:-acc}
 
 # delegates to the dapo trainer, which does the dynamic sampling.
 python -u -m recipe.dapo.main_dapo \

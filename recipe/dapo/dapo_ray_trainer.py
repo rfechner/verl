@@ -114,7 +114,7 @@ class RayDAPOTrainer(RayPPOTrainer):
 
             # in case we need to drop solved questions, do so at start of epoch.
             if self.config.algorithm.get('filter_solved', False) and len(self.solverates) > 0:
-                threshold = self.config.algorithm.get('filter_solved_threshold', -0.5)
+                threshold = self.config.algorithm.get('filter_solved_threshold', 0.25)
 
                 # keep unsolved or low-solverate samples
                 drop_idx = set([
@@ -128,6 +128,7 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                 filt_ds = Subset(self.train_dataloader.dataset.dataframe, keep_idx)
                 self.train_dataloader.dataset.dataframe = filt_ds
+                print(f"Epoch: {epoch}, dropped: {len(drop_idx)} already solved questions from training set.")
                 self.solverates = {} # reset solverates.
                 
             for batch_dict in self.train_dataloader:
@@ -180,6 +181,8 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                             del gen_baseline_batch, gen_baseline_output
 
+                    # why not just get the index instead of assigning uid's? -> This will lead to duplicate query groups
+                    # when the trainloader is iterated a second time per gradient step.
                     new_batch.non_tensor_batch["uid"] = np.array(
                         [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
                     )
@@ -288,11 +291,8 @@ class RayDAPOTrainer(RayPPOTrainer):
                             batch = batch[:traj_bsz]
 
                     # === Updating ===
-
-                    # ==== simple solverate update ====
-                    # We assume every example in the batch has a question id "qid"
-                    idx = new_batch.non_tensor_batch["index"]
-                    seq_rewards = new_batch.batch["token_level_scores"].sum(dim=-1).cpu().numpy()
+                    idx = batch.non_tensor_batch["index"]
+                    seq_rewards = batch.non_tensor_batch["acc"].sum(dim=-1).cpu().numpy()
                     idx2rewards = {}
                     for i, r in zip(idx, seq_rewards, strict=True):
                         idx2rewards.setdefault(i, []).append(float(r))

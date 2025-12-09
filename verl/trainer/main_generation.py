@@ -47,9 +47,26 @@ def main(config):
 
 def run_generation(config) -> None:
     if not ray.is_initialized():
+        print("Ray not initialized. Initializing...")
+
         # this is for local ray cluster
-        default_runtime_env = {"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN"}}
-        ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
+        default_runtime_env = {"env_vars": {"TOKENIZERS_PARALLELISM": "true", 
+                                            "NCCL_DEBUG": "WARN"}}
+        ray_init_kwargs = {
+            'runtime_env' : {
+                'working_dir': 'verl/',
+                'excludes' : ["/.git/"],
+                'env_vars': {
+                    'ROCR_VISIBLE_DEVICES' : "", # unset ROCR visible devices. Required by verl.
+                    'TORCH_NCCL_AVOID_RECORD_STREAMS' : "1",
+                    'CUDA_DEVICE_MAX_CONNECTIONS' : "1",
+                    'TOKENIZERS_PARALLELISM': 'true',
+                    'NCCL_DEBUG': 'WARN',
+                    'VLLM_LOGGING_LEVEL': 'WARN'
+                }
+            }
+        } 
+    
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
@@ -72,6 +89,7 @@ def main_task(config):
         assert config.data.n_samples == 1, "When temperature=0, n_samples must be 1."
     assert config.data.n_samples >= 1, "n_samples should always >= 1"
 
+    print('Loading Dataset.')
     # read dataset. Note that the dataset should directly contain chat template format (e.g., a list of dictionary)
     dataset = pd.read_parquet(config.data.path)
     chat_lst = dataset[config.data.prompt_key].tolist()
@@ -82,6 +100,7 @@ def main_task(config):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print('Initializing Rollout Worker Group.')
     ray_cls_with_init = RayClassWithInitArgs(cls=ray.remote(ActorRolloutRefWorker), config=config, role="rollout")
     resource_pool = RayResourcePool(process_on_nodes=[config.trainer.n_gpus_per_node] * config.trainer.nnodes)
     wg = RayWorkerGroup(
@@ -91,12 +110,14 @@ def main_task(config):
     )
     wg.init_model()
 
+    
     total_samples = len(dataset)
     config_batch_size = config.data.batch_size
     apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
     num_batch = -(-total_samples // config_batch_size)
     output_lst = [[] for _ in range(config.data.n_samples)]
-
+    print("Initialized Rollout Worker Group. Beginning Rollouts.")
+    
     for batch_idx in range(num_batch):
         print(f"[{batch_idx + 1}/{num_batch}] Start to process.")
         batch_chat_lst = chat_lst[batch_idx * config_batch_size : (batch_idx + 1) * config_batch_size]
