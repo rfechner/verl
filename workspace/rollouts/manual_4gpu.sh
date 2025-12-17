@@ -40,19 +40,22 @@ unset __conda_setup
 
 # Activate your environment
 conda activate verl
+echo "Activated verl"
 
 # logging into huggingface
 python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
-
+echo "Logged into huggingface hub"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) Start Generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-data_path=$HOME/data/ariadne/prompts.parquet
-save_path=$HOME/data/ariadne/outputs.parquet
-model_path=Qwen/Qwen2.5-7B
+data_path=$HOME/data/ariadne/ood-prompts-simple2.parquet
+save_path=$HOME/data/ariadne/debug-ood-outputs-simple2-longeranswers.parquet
+model_path=Qwen/Qwen3-8B
+max_response_len=$((1024*6))
 
+echo "Starting rollouts..."
 python3 -m verl.trainer.main_generation \
     trainer.nnodes=1 \
     trainer.n_gpus_per_node=4 \
@@ -67,10 +70,10 @@ python3 -m verl.trainer.main_generation \
     rollout.top_k=-1 \
     rollout.top_p=0.7 \
     rollout.prompt_length=2048 \
-    rollout.response_length=1024 \
+    rollout.response_length=${max_response_len} \
     rollout.tensor_model_parallel_size=4 \
-    rollout.gpu_memory_utilization=0.3 \
-    rollout.log_prob_micro_batch_size_per_gpu=8 
+    rollout.gpu_memory_utilization=0.6 \
+    rollout.log_prob_micro_batch_size_per_gpu=16
 echo "========================================================"
 echo "Training completed with exit code: $?"
 echo "End time: $(date)"

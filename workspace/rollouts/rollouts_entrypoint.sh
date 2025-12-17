@@ -146,9 +146,6 @@ sleep 15
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) Start Generation
 # ─────────────────────────────────────────────────────────────────────────────
-
-model_path=Qwen/Qwen2.5-7B
-
 python3 -m verl.trainer.main_generation \
     trainer.nnodes=2 \
     trainer.n_gpus_per_node=4 \
@@ -162,9 +159,9 @@ python3 -m verl.trainer.main_generation \
     rollout.top_k=-1 \
     rollout.top_p=0.7 \
     rollout.prompt_length=2048 \
-    rollout.response_length=1024 \
+    rollout.response_length=3072 \
     rollout.tensor_model_parallel_size=4 \
-    rollout.gpu_memory_utilization=0.3 \
+    rollout.gpu_memory_utilization=0.6 \
     rollout.log_prob_micro_batch_size_per_gpu=8
 
 echo "========================================================"
