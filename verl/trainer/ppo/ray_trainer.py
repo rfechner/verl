@@ -238,6 +238,20 @@ def compute_advantage(
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
+    elif adv_estimator == AdvantageEstimator.GRPO_PASSK:
+        # Initialize the mask for GRPO calculation
+        grpo_calculation_mask = data.batch["response_mask"]
+
+        # Call compute_grpo_outcome_advantage with parameters matching its definition
+        advantages, returns = core_algos.compute_grpo_passk_outcome_advantage(
+            token_level_rewards=data.batch["token_level_rewards"],
+            response_mask=grpo_calculation_mask,
+            index=data.non_tensor_batch["uid"],
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+            config=config
+        )
+        data.batch["advantages"] = advantages
+        data.batch["returns"] = returns
     else:
         # handle all other adv estimator type other than GAE and GRPO
         adv_estimator_fn = core_algos.get_adv_estimator_fn(adv_estimator)
@@ -399,12 +413,12 @@ class RayPPOTrainer:
 
     def _create_logprob_dataloader(self, collate_fn, num_workers) -> DataLoader:
         
-        if self.config.trainer.compute_logprob_from_file and \
-            self.config.trainer.compute_logprob_from_rollout_dir:
+        if self.config.trainer.get('compute_logprob_from_file', False) and \
+            self.config.trainer.get('compute_logprob_from_rollout_dir', False):
             raise ValueError("Calc from single file and calc from directory were both set to true. Unexpected behaviour.")
         
         from verl.utils.dataset.rl_dataset import RLHFDataset
-        if self.config.trainer.compute_logprob_from_file:
+        if self.config.trainer.get('compute_logprob_from_file', False):
 
             logprob_dataset = RLHFDataset(
                 data_files=self.config.trainer.compute_logprob_from_file,
@@ -496,8 +510,8 @@ class RayPPOTrainer:
             collate_fn=collate_fn,
         )
 
-        if self.config.trainer.compute_logprob_from_file or \
-            self.config.trainer.compute_logprob_from_rollout_dir:
+        if self.config.trainer.get('compute_logprob_from_file', False) or \
+            self.config.trainer.get('compute_logprob_from_rollout_dir', False):
                 self._create_logprob_dataloader(collate_fn=collate_fn, num_workers=num_workers)
         
         assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
@@ -759,11 +773,11 @@ class RayPPOTrainer:
             if early_exit:
                 exit(0)
             
-        if not self.config.trainer.skip_logprobs:
+        if not self.config.trainer.get('skip_logprobs', True):
             print("[VALIDATION] Logprobs")
             self.dump_logprobs_for_precomputed_chats()
 
-        if self.config.trainer.skip_validation:
+        if self.config.trainer.get('skip_validation', False):
             return {}
         
         print("[VALIDATION] Rollouts")

@@ -60,6 +60,8 @@ models = {
     'r1-qwen-medium' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
     'r1-qwen-large' : "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", 
     'r1-llama-large' : "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    'eurollm' : "utter-project/EuroLLM-9B-Instruct",
+    "olmo3" : "allenai/Olmo-3-7B-Instruct-SFT" # have to use flashinfer environment for this to work.
     # 'gpt-oss' : 'openai/gpt-oss-20b' # currently not working because of quantization errors.
 }
 
@@ -73,7 +75,8 @@ def main():
         'clip-cov',
         'grpo-s',
         'gtpo',
-        'entropy_reg'
+        'entropy_reg',
+        'grpo-passk' # pass@k training
     ]
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
     parser.add_argument("--method", required=True, choices=method_valid_choices, help="Which training method to use")
@@ -84,7 +87,7 @@ def main():
     parser.add_argument("--cont", action="store_true", help="Continue existing checkpoint if present")
     parser.add_argument("--tp", type=int, default=4, help="Tensor model parallel size (tensor parallelism)")
     parser.add_argument("--valn", type=int, default=8, help="Number of validation samples to dump per validation step.")
-    parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
+    #parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
     parser.add_argument("--no-logprobs", action='store_true', default=False, help='flag: do not compute logprobs for pre-rollouts')
     parser.add_argument("--no-validation", action='store_true', default=False, help='flag: do not calculate/dump validation rollouts.')
     parser.add_argument("--epochs", type=int, default=10)
@@ -222,6 +225,7 @@ def main():
     entrypoint_script = {
         'grpo' : 'grpo_entrypoint.sh',
         'gtpo' : 'grpo_entrypoint.sh',
+        'grpo-passk' : 'grpo_entrypoint.sh',
         'grpo-s' : 'grpo_entrypoint.sh',
         'entropy_reg' : 'grpo_entrypoint.sh',
         'kl-cov' : 'klcov_entrypoint.sh',
@@ -287,7 +291,7 @@ def main():
         # Environement flags
         'VERL_FILE_LOGGER_ROOT' : logger_root,
         # algorithm and data
-        "algorithm_adv_estimator": "grpo",
+        "algorithm_adv_estimator": "grpo_passk" if args.method == "grpo-passk" else "grpo",
         "data_truncation": "left",
         
         # actor model flags
@@ -330,7 +334,7 @@ def main():
     })
 
     # export which conda env to activate in the entrypoint scripts
-    conda_env = "flashinfer" if args.flashinfer else "verl"
+    conda_env = "flashinfer" # if args.flashinfer else "verl"
     config.update({
         "conda_env": conda_env,
     })

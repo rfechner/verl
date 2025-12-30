@@ -23,7 +23,7 @@ def main():
 
     # TODO
     parser = argparse.ArgumentParser()
-    parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
+    #parser.add_argument("--flashinfer", action="store_true", help="Activate flashinfer conda env instead of verl when set")
     parser.add_argument("--data", required=True, type=str, help='Path to the prompt dataset to load.')
     parser.add_argument("--out", default=None, help='Output path for serialization of results.')
     parser.add_argument("--model", default="Qwen/Qwen3-8B", help='Model Path')
@@ -39,7 +39,7 @@ def main():
 
     entrypoint_script = '/u/rfechner/verl/workspace/rollouts/rollouts_entrypoint.sh'
     config = {
-        "conda_env" : "flashinfer" if args.flashinfer else "verl",
+        "conda_env" : "flashinfer", # if args.flashinfer else "verl",
         "data_path" : args.data,
         "save_path" : args.out,
         "model_path" : args.model

@@ -50,8 +50,8 @@ echo "Logged into huggingface hub"
 # 3) Start Generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-data_path=$HOME/data/ariadne/ood-prompts-simple2.parquet
-save_path=$HOME/data/ariadne/debug-ood-outputs-simple2-longeranswers.parquet
+data_path=$HOME/data/ariadne/ood-prompts-per-checkpoint-verify.parquet
+save_path=$HOME/data/ariadne/ood-outputs-per-checkpoint-verify.parquet
 model_path=Qwen/Qwen3-8B
 max_response_len=$((1024*6))
 

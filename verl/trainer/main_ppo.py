@@ -91,6 +91,10 @@ def run_ppo(config) -> None:
                 for distributed PPO training including Ray initialization settings,
                 model paths, and training hyperparameters.
     """
+
+    # Set torch deterministic
+    torch.use_deterministic_algorithms(True)
+    
     # Check if Ray is not initialized
     print(f"Ray initialized: {ray.is_initialized()}")
     if not ray.is_initialized():

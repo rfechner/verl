@@ -39,7 +39,7 @@ unset __conda_setup
 # <<< conda initialize <<<
 
 # Activate your environment
-conda activate verl
+conda activate flashinfer
 
 # logging into huggingface
 python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
@@ -104,8 +104,9 @@ python -u -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=true \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=false \
+    +trainer.compute_logprob_from_rollout_dir=false \
     +trainer.validation_data_dir="${CHECKPOINT_DIR}/val_jsonl" \
-    +trainer.compute_logprob_from_file="/u/rfechner/verl/workspace/chats.jsonl" \
+    +trainer.compute_logprob_from_file=false \
     +trainer.compute_logprob_batch_size=8 \
     trainer.resume_mode=auto \
     trainer.default_local_dir="${CHECKPOINT_DIR}" \
