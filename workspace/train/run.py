@@ -334,7 +334,7 @@ def main():
     })
 
     # export which conda env to activate in the entrypoint scripts
-    conda_env = "flashinfer" # if args.flashinfer else "verl"
+    conda_env = "verl" # if args.flashinfer else "verl"
     config.update({
         "conda_env": conda_env,
     })
