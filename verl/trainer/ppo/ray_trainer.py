@@ -705,6 +705,12 @@ class RayPPOTrainer:
             checkpoints = list(filter(lambda x: x.startswith('global_step_'), os.listdir(directory)))
             checkpoints = list(sorted(checkpoints, key=lambda x: int(x.split('_')[-1]))) # sorts ascending
             checkpoints = ['BASEMODEL'] + checkpoints # pre-pend None s.t. basemodel is validated first.
+
+            # if we specify, we only want to evaluate the first and last checkpoint.
+            if self.config.trainer.get('only_first_last_checkpoint', False):
+                print("Only evaluating the first and the last checkpoint.")
+                checkpoints = [checkpoints[0], checkpoints[-1]]
+                
             print('Loaded checkpoints:\n', "\n".join(checkpoints))
             
             # I assume that the evaluation scripts have to be re-run mutliple times to finish. In these cases, we'd like

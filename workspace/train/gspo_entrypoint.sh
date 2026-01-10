@@ -28,6 +28,13 @@ else
     export FLASHINFER_ENABLE=0
 fi
 
+# torch dynamo compilation directories. Needed for jobs surges, as SLURM+Lustre+torch dynamo doesn't like concurrent compilation.
+export TORCHINDUCTOR_CACHE_DIR=/ptmp/rfechner/.cache/torch_inductor_$SLURM_JOB_ID
+export TRITON_CACHE_DIR=/ptmp/rfechner/.cache/triton_$SLURM_JOB_ID
+export VLLM_CACHE_DIR=/ptmp/rfechner/.cache/vllm_$SLURM_JOB_ID
+export XDG_CACHE_HOME=/ptmp/rfechner/.cache/xdg_$SLURM_JOB_ID
+# huggingface token for login
+export HUGGINGFACE_HUB_TOKEN=$(tr -d '\n' < $HOME/.cache/huggingface/token)
 echo "========================================================"
 echo "Starting VERL Training Job: $SLURM_JOB_NAME"
 echo "Job ID: $SLURM_JOB_ID"
@@ -258,6 +265,7 @@ python -u -m verl.trainer.main_ppo \
     +reward_model.reward_kwargs.overlong_buffer_cfg.len=2048 \
     +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0 \
     +reward_model.reward_kwargs.overlong_buffer_cfg.log=false \
+    +trainer.only_first_last_checkpoint=${trainer_only_first_last_checkpoint} \
     +reward_model.reward_kwargs.max_resp_len=3072
 
 echo "========================================================"

@@ -43,8 +43,8 @@ conda activate verl
 echo "Activated verl"
 
 # logging into huggingface
-python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
-echo "Logged into huggingface hub"
+# python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
+# echo "Logged into huggingface hub"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) Start Generation
@@ -52,7 +52,7 @@ echo "Logged into huggingface hub"
 
 data_path=$HOME/data/ariadne/ood-prompts-per-checkpoint-verify.parquet
 save_path=$HOME/data/ariadne/ood-outputs-per-checkpoint-verify.parquet
-model_path=Qwen/Qwen3-8B
+model_path=meta-llama/Llama-3.1-8B-Instruct #Qwen/Qwen3-8B
 max_response_len=$((1024*6))
 
 echo "Starting rollouts..."

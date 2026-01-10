@@ -42,7 +42,7 @@ unset __conda_setup
 conda activate flashinfer
 
 # logging into huggingface
-python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
+# python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
 
 math500=/u/rfechner/data/math500/test.parquet
 aime25=/u/rfechner/data/aime25/test.parquet
@@ -51,7 +51,7 @@ cmimc2025=/u/rfechner/data/cmimc_2025/test.parquet
 hmmt2025=/u/rfechner/data/hmmt_feb_2025/test.parquet
 test_files="['$math500', '$aime25', '$brumo2025', '$cmimc2025', '$hmmt2025']"
 
-echo "Logged into huggingface"
+
 CHECKPOINT_DIR="/ptmp/rfechner/out/default/test3"
 export VERL_FILE_LOGGER_ROOT="/ptmp/rfechner/out"
 python -u -m verl.trainer.main_ppo \

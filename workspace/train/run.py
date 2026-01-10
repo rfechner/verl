@@ -105,13 +105,14 @@ def main():
     parser.add_argument("--dryrun", action='store_true', default=False, help='Whether to dryrun the current experiment. This will terminate the script before delegating to sbatch.')
     parser.add_argument("--val_batchsize", type=int, default=512) # If set to none, whole batch is sent to inference engine.
     parser.add_argument("--val_data", type=str, default=None, help='Validation file. If not provided this will default to Math500 + MathArena datasets.')
-
+    parser.add_argument("--only-first-last-checkpoint", action="store_true", default=False, help='Conditional Flag. Only allwed when chdir !=  None. Will trigger evaluation of only first (base model) and last checkpoint from the provided checkpoint directory.')
+    
     # ======== TEMPORARY OPTIONS FOR TESTING ========
     parser.add_argument("--filter-solved", action="store_true", help="Whether to drop solved (solverate > 1/4) samples from the dataframe on epoch beginning.")
     parser.add_argument("--dapo-seq-reward", action="store_true", help="Whether to filter for sequence rewards instead of final reward. Currently only used acc.")
-
+    
     args = parser.parse_args()
-
+    
     # ======== Argument Verification ========
 
     if args.filter_solved:
@@ -188,22 +189,22 @@ def main():
             raise ValueError("Running training with too high number of validation rollouts.")
 
     
-    from huggingface_hub import HfFolder, login
-    from pathlib import Path
+    # from huggingface_hub import HfFolder, login
+    # from pathlib import Path
 
-    token_path = Path.home() / ".cache/huggingface/token"
+    # token_path = Path.home() / ".cache/huggingface/token"
 
-    # Check if a token is already stored
-    stored_token = HfFolder.get_token()
+    # # Check if a token is already stored
+    # stored_token = None #HfFolder.get_token()       Have to login every session because of SLURM weirdness
 
-    if stored_token is None:
-        print("Not logged in. Logging in...")
-        token = token_path.read_text().strip()
-        login(token=token)
-        print("Logged into Hugging Face Hub.")
-    else:
-        print("Already logged in.")
-        
+    # if stored_token is None:
+    #     print("Not logged in. Logging in...")
+    #     token = token_path.read_text().strip()
+    #     login(token=token)
+    #     print("Logged into Hugging Face Hub.")
+    # else:
+    #     print("Already logged in.")
+            
     # Build experiment name (snake_case consistency: lowercase with underscores)
     base_model_name = os.path.basename(args.model).lower().replace("-", "_")
     if args.identifier:
@@ -247,7 +248,8 @@ def main():
         "trainer_resume_path" : args.cp,
         "trainer_skip_validation" : args.no_validation,
         "trainer_skip_logprobs" : args.no_logprobs,
-
+        "trainer_only_first_last" : args.only_first_last_checkpoint,
+        
         # Where to dump validation generations (placed next to checkpoints by default)
         "trainer_validation_data_dir": os.path.join(checkpoint_dir, "val_jsonl"),
         
@@ -334,7 +336,7 @@ def main():
     })
 
     # export which conda env to activate in the entrypoint scripts
-    conda_env = "verl" # if args.flashinfer else "verl"
+    conda_env = "flashinfer" # if args.flashinfer else "verl"
     config.update({
         "conda_env": conda_env,
     })
