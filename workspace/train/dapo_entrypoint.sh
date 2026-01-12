@@ -29,10 +29,10 @@ else
 fi
 
 # torch dynamo compilation directories. Needed for jobs surges, as SLURM+Lustre+torch dynamo doesn't like concurrent compilation.
-export TORCHINDUCTOR_CACHE_DIR=/ptmp/rfechner/.cache/torch_inductor_$SLURM_JOB_ID
-export TRITON_CACHE_DIR=/ptmp/rfechner/.cache/triton_$SLURM_JOB_ID
-export VLLM_CACHE_DIR=/ptmp/rfechner/.cache/vllm_$SLURM_JOB_ID
-export XDG_CACHE_HOME=/ptmp/rfechner/.cache/xdg_$SLURM_JOB_ID
+# export TORCHINDUCTOR_CACHE_DIR=/ptmp/rfechner/.cache/torch_inductor_$SLURM_JOB_ID
+# export TRITON_CACHE_DIR=/ptmp/rfechner/.cache/triton_$SLURM_JOB_ID
+# export VLLM_CACHE_DIR=/ptmp/rfechner/.cache/vllm_$SLURM_JOB_ID
+# export XDG_CACHE_HOME=/ptmp/rfechner/.cache/xdg_$SLURM_JOB_ID
 
 # huggingface token for login
 export HUGGINGFACE_HUB_TOKEN=$(tr -d '\n' < $HOME/.cache/huggingface/token)

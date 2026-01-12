@@ -164,6 +164,10 @@ class TaskRunner:
 
         # instantiate tokenizer
         from verl.utils import hf_processor, hf_tokenizer
+        from huggingface_hub import login
+
+        print("Logging into Huggingface.")
+        login(token=os.environ.get('HUGGINGFACE_HUB_TOKEN'))
 
         tokenizer = hf_tokenizer(local_path)
         processor = hf_processor(local_path, use_fast=True)  # used for multimodal LLM, could be none

@@ -97,8 +97,24 @@ class TaskRunner:
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path)
         print(f"{config.actor_rollout_ref.model.path}")
+
+        # debugging: When loading with gated model, huggingface authentification fails. I'm supposing
+        # we cannot find the token in disk.
+
+        # 1) is token accessible?
+        if os.path.isfile('/u/rfechner/.cache/huggingface/token'):
+            print("Found huggingface token.")
+
         # instantiate tokenizer
         from verl.utils import hf_processor, hf_tokenizer
+        from huggingface_hub import login
+
+        print("Logging into Huggingface.")
+        if os.environ.get('HUGGINGFACE_HUB_TOKEN', False):    
+            login(token=os.environ.get('HUGGINGFACE_HUB_TOKEN'))
+        else:
+            login() # automatic login
+        
 
         trust_remote_code = config.data.get("trust_remote_code", False)
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)

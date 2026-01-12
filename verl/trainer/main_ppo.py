@@ -346,7 +346,10 @@ class TaskRunner:
 
         # Instantiate the tokenizer and processor.
         from verl.utils import hf_processor, hf_tokenizer
+        from huggingface_hub import login
 
+        print("Logging into Huggingface.")
+        login(token=os.environ.get('HUGGINGFACE_HUB_TOKEN'))
         trust_remote_code = config.data.get("trust_remote_code", False)
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         # Used for multimodal LLM, could be None
