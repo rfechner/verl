@@ -248,7 +248,7 @@ def main():
         "trainer_resume_path" : args.cp,
         "trainer_skip_validation" : args.no_validation,
         "trainer_skip_logprobs" : args.no_logprobs,
-        "trainer_only_first_last" : args.only_first_last_checkpoint,
+        "trainer_only_first_last_checkpoint" : args.only_first_last_checkpoint,
         
         # Where to dump validation generations (placed next to checkpoints by default)
         "trainer_validation_data_dir": os.path.join(checkpoint_dir, "val_jsonl"),

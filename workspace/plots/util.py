@@ -63,15 +63,62 @@ def rollouts_from_disk(root) -> dict:
         p : dict = pickle.load(file)
     return p
 
+def qw7_rollouts(recompute=True) -> dict:
+    """
+    Collect rollouts for experiment 05. 
+    """
+    print("Reading Qwen2.5-7B rollouts")
+    if not recompute:
+        return rollouts_from_disk(root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b")
+    
+    qwen_root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b"
+    rollout_paths = {d : os.path.join(qwen_root, d, 'val_jsonl') for d in os.listdir(qwen_root) if os.path.isdir(os.path.join(qwen_root, d))}
+
+    passk = {}
+    for method, path in rollout_paths.items():
+        rollout_files = list(
+                            sorted(
+                                filter(lambda x: x.endswith('_rollouts.jsonl'), os.listdir(path)),
+                                key=lambda x: x.split('_')[0])
+                            )
+        passrates = {}
+        for file in tqdm(rollout_files, desc=method):
+            with open(os.path.join(path, file), 'r') as jsonfile:
+                checkpoint_index = file.split('_')[0]
+                df = pd.read_json(jsonfile, lines=True)
+                pass_at_values = calculate_pass_at_k(df, ks=2**np.arange(9))
+                
+
+                passrates[checkpoint_index] = pass_at_values
+        passk[method] = passrates
+
+    with open(os.path.join(qwen_root, 'cached.pickle'), 'wb') as file:
+        pickle.dump(passk, file)
+
+    # we have to correct for the base model archiving different pass@k values. In this analysis we'll just take the first estimate.
+    base_model_mapper = {model : None for model in set([m.split('__')[0] for m in rollout_paths.keys()])}
+    for method in rollout_paths.keys():
+        m = method.split('__')[0]
+        if base_model_mapper[m] is None:
+            base_model_mapper[m] = passk[method]['0']
+        
+        # overwrite the base model's pass@k with the first found pass@k estimate to equalize pass@k for base model over methods.
+        passk[method]['0'] = base_model_mapper[m]
+
+    print(f"Serializing to {os.path.join(qwen_root, 'cache.pickle')}")
+    with open(os.path.join(qwen_root, 'cache.pickle'), 'wb') as file:
+        pickle.dump(obj=passk, file=file)
+
+    return passk
+
 def rollouts(recompute=True) -> dict:
     """
     Collect rollouts for experiment 13. Rollouts are split across two experiment directories, as we're including
     past rollouts for qwen2.5-7b which we don't have to re-run.
     """
+    print("Reading Experiment 13 + selective Qwen2.5-7B rollouts.")
     if not recompute:
         return rollouts_from_disk(root = "/ptmp/rfechner/out/exp13_rollouts")
-    
-    print("Recompute=False, reading rollouts again and computing pass@k anew.")
     exp13_root = "/ptmp/rfechner/out/exp13_rollouts/"
     qwen_root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b"
 
