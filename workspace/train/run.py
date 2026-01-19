@@ -179,7 +179,9 @@ def main():
         random_checkpoint = os.path.join(args.cpdir, checkpoint_files[0])
         handle_checkpoint_validation(random_checkpoint, args.nodes * 4) # 4 GPUs per Node have to match world_size of chkpt
         handle_model_method_validation(random_checkpoint, args.method, args.model) # for re-loading. Make sure method/model is chosed correctly.
-
+    elif args.cp:
+        handle_checkpoint_validation(args.cp, args.nodes * 4) # 4 GPUs per Node have to match world_size of chkpt
+        handle_model_method_validation(args.cp, args.method, args.model) # for re-loading. Make sure method/model is chosed correctly.
     else: # we're training
         if args.cpdir:
             raise ValueError("Training but checkpoint directory was set. This option is only used in evaluation. To set a checkpoint use --cp pointing towards .../global_step_X directory.")
