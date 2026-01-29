@@ -4,6 +4,43 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+method_color_mapper = {
+    'grpo-s': 'red',
+    'kl-cov': 'green',
+    'grpo-passk': 'blue',
+    'gspo': 'orange',
+    'grpo' : 'yellow',
+    'drgrpo' : 'cyan',
+    'dapo' : 'pink',
+    'gtpo' : 'brown',
+    'clip-cov' : 'violet',
+    'base' : 'black'
+}
+
+model_marker_mapper = {
+    k : v for k, v in zip(['qwen2.5_7b', 'qwen2.5_1.5b', 'eurollm_9b_instruct', 'llama_3.1_8b_instruct'], \
+                           ['*', '-' '+', '^', 'o'])
+}
+
+method_name_mapper = {
+    'grpo-s' : "GRPO-S",
+    'grpo-passk' : "Pass@k Training",
+    'gspo' : "GSPO",
+    'kl-cov' : "KL-Cov",
+    'grpo' : "GRPO",
+    'drgrpo' : "Dr.GRPO",
+    'clip-cov' : "Clip-Cov",
+    'gtpo' : "GTPO",
+    'entropy_reg' : "Entropy Reg",
+    'dapo' : "DAPO"
+}
+model_name_mapper = {
+    'qwen2.5_7b' : "Qwen2.5-7B",
+    "eurollm_9b_instruct" : "EuroLLM-9B-Instruct",
+    "qwen2.5_1.5b": "Qwen2.5-1.5B",
+    "llama_3.1_8b_instruct" : "Llama3.1-8B-Instruct"
+}
+
 def pass_at_k(rewards, k):
     """
     Compute pass@k for a list or array of binary rewards.
