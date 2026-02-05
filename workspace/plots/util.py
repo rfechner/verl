@@ -8,8 +8,8 @@ method_color_mapper = {
     'grpo-s': 'red',
     'kl-cov': 'green',
     'grpo-passk': 'blue',
-    'gspo': 'orange',
-    'grpo' : 'yellow',
+    'gspo': 'yellow',
+    'grpo' : 'orange',
     'drgrpo' : 'cyan',
     'dapo' : 'pink',
     'gtpo' : 'brown',
@@ -19,7 +19,7 @@ method_color_mapper = {
 
 model_marker_mapper = {
     k : v for k, v in zip(['qwen2.5_7b', 'qwen2.5_1.5b', 'eurollm_9b_instruct', 'llama_3.1_8b_instruct'], \
-                           ['*', '-' '+', '^', 'o'])
+                           ['*', '+', '^', 'o'])
 }
 
 method_name_mapper = {
@@ -160,7 +160,7 @@ def rollouts(recompute=True) -> dict:
     qwen_root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b"
 
     # mask for methods of interest
-    qwen_method_mask = ['grpo-passk', 'gspo', 'grpo-s', 'kl-cov']
+    qwen_method_mask = ['grpo-passk', 'gspo', 'grpo', 'grpo-s', 'kl-cov']
 
     exp13_dirs = os.listdir(exp13_root)
     exp13_dirs = list(filter(lambda x: os.path.isdir(os.path.join(exp13_root, x)), exp13_dirs))

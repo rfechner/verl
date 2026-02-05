@@ -76,8 +76,10 @@ def main():
         'grpo-s',
         'gtpo',
         'entropy_reg',
-        'grpo-passk' # pass@k training
+        'grpo-passk', # pass@k training
+        "klcov_passk" # KL-Cov and Pass@k advantage estimation
     ]
+
     parser = argparse.ArgumentParser(description="Entrypoint router for VERL experiments (minimal required args)")
     parser.add_argument("--method", required=True, choices=method_valid_choices, help="Which training method to use")
     parser.add_argument("--model", type=str, default='meta-llama/Llama-3.2-1B-Instruct', choices=list(models.keys()) + list(models.values()), help="Path to model or model id")
@@ -96,7 +98,8 @@ def main():
     parser.add_argument("--nodes", type=int, default=2)
     parser.add_argument("--cp", type=str, default=None, help="Model Checkpoint to train/eval from. Specify 'global_step_X' directory.")
     parser.add_argument("--train_batchsize", type=int, default=512)
-    
+    parser.add_argument("--seed", type=int, default=1, help='Random seed for trainloader initialization.')
+
     # ======== EVAL OPTIONS ========
     parser.add_argument("--eval", action="store_true", help="Runs evaluation from given checkpoint. Needs --checkpoint to be specified")
     parser.add_argument("--cpdir", type=str, default=None, help="Model Checkpoint directory to load checkpoints from. Note: This can only be set in case we're evaluating.")
@@ -235,7 +238,8 @@ def main():
         'clip-cov' : 'klcov_entrypoint.sh',
         'gspo' : 'gspo_entrypoint.sh',
         'dapo' : 'dapo_entrypoint.sh',
-        'drgrpo' : 'drgrpo_entrypoint.sh'
+        'drgrpo' : 'drgrpo_entrypoint.sh',
+        'klcov_passk' : 'klcov_entrypoint.sh'
     }[args.method]
 
     entrypoint_script = os.path.join(this_dir, entrypoint_script)
@@ -279,7 +283,7 @@ def main():
         "top_p" : 1.0, # training top-p
         "val_top_p" : 0.7,
         "gtpo" : args.method=='gtpo',
-        "grpo_s" : args.method=='gpro-s',
+        "grpo_s" : args.method == 'gpro-s',
         "loss_mode" : args.method.replace('-', '_') if args.method in ['gspo', 'kl-cov', 'clip-cov'] else 'vanilla',
         "entropy_coeff" : 0.001 if args.method == 'entropy_reg' else 0
     }
@@ -292,10 +296,11 @@ def main():
 
     # Export shared-but-fixed parameters (these are set in both entrypoint scripts)
     config.update({
+        "data_seed" : args.seed,
         # Environement flags
         'VERL_FILE_LOGGER_ROOT' : logger_root,
         # algorithm and data
-        "algorithm_adv_estimator": "grpo_passk" if args.method == "grpo-passk" else "grpo",
+        "algorithm_adv_estimator": "grpo_passk" if args.method in ["grpo-passk", 'klcov_passk'] else "grpo",
         "data_truncation": "left",
         
         # actor model flags

@@ -39,8 +39,9 @@ unset __conda_setup
 # <<< conda initialize <<<
 
 # Activate your environment
-conda activate verl
-echo "Activated verl"
+env=flashinfer
+conda activate ${env}
+echo "Activated ${env}"
 
 # logging into huggingface
 # python -c "from huggingface_hub import login; login(token=open('$HOME/.cache/huggingface/token').read().strip())"
@@ -50,9 +51,9 @@ echo "Activated verl"
 # 3) Start Generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-data_path=$HOME/data/ariadne/ood-prompts-per-checkpoint-verify.parquet
-save_path=$HOME/data/ariadne/ood-outputs-per-checkpoint-verify.parquet
-model_path=meta-llama/Llama-3.1-8B-Instruct #Qwen/Qwen3-8B
+data_path=$HOME/data/verified_at_k/chats.parquet
+save_path=$HOME/data/verified_at_k/chats-out.parquet
+model_path=Qwen/Qwen3-8B
 max_response_len=$((1024*6))
 
 echo "Starting rollouts..."

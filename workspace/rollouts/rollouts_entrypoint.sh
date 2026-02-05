@@ -162,7 +162,7 @@ python3 -m verl.trainer.main_generation \
     rollout.response_length=3072 \
     rollout.tensor_model_parallel_size=4 \
     rollout.gpu_memory_utilization=0.6 \
-    rollout.log_prob_micro_batch_size_per_gpu=8
+    rollout.log_prob_micro_batch_size_per_gpu=16
 
 echo "========================================================"
 echo "Training completed with exit code: $?"

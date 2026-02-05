@@ -44,6 +44,60 @@ from verl.trainer.ppo.ray_trainer import (
 from verl.utils.profiler import simple_timer
 
 
+def grpo_s(batch, n, beta=0.1, eps=1e-8):
+    """
+    Implementation of GRPO-S (Sequence-level entropy shaping).
+    Applies a bonus for correct sequences and a penalty for incorrect ones
+    based on their relative entropy within the group.
+    """
+    entropies = batch["entropys"].detach()
+    token_rewards = batch["token_level_rewards"].detach().clone()
+    token_scores = batch["token_level_scores"].detach()
+
+    num_groups = entropies.shape[0] // n
+    shaped_rewards = token_rewards.clone()
+
+    for g in range(num_groups):
+        start, end = g * n, (g + 1) * n
+        group_h = entropies[start:end]  # (n, seq_len)
+        
+        # r_i: Binary indicator if sequence reward is positive
+        # Summing scores over tokens to determine sequence success
+        r_i = (token_scores[start:end].sum(dim=1) > 0).float() # (n,)
+        
+        # Arithmetic mean of entropy per sequence: H_hat_i
+        h_hat = group_h.mean(dim=1) # (n,)
+        
+        # Masks for positive (n) and negative (m) sequences
+        pos_mask = r_i > 0
+        neg_mask = ~pos_mask
+        
+        n_pos = pos_mask.sum()
+        m_neg = neg_mask.sum()
+
+        # Initialize the entropy reward vector for the group
+        r_entropy = torch.zeros_like(h_hat)
+
+        # Case 1: r_i > 0 (Bonus for high entropy in correct paths)
+        if n_pos > 0:
+            h_pos = h_hat[pos_mask]
+            bonus = (h_pos / (h_pos.sum() + eps)) * n_pos
+            r_entropy[pos_mask] = beta * 1.0 * bonus
+
+        # Case 2: Otherwise (Penalty for high entropy in incorrect paths)
+        if m_neg > 0:
+            # Formula uses 1/H_i for the penalty distribution
+            inv_h_neg = 1.0 / (h_hat[neg_mask] + eps)
+            penalty = (inv_h_neg / (inv_h_neg.sum() + eps)) * m_neg
+            r_entropy[neg_mask] = beta * (-1.0) * penalty
+
+        # Add the sequence-level entropy reward to the token-level rewards
+        # Reshape r_entropy to (n, 1) for broadcasting across sequence length
+        shaped_rewards[start:end] += r_entropy.view(n, 1)
+
+    batch["token_level_rewards"] = shaped_rewards.detach()
+    return batch
+
 class RayEntropyTrainer(RayPPOTrainer):
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
@@ -186,6 +240,12 @@ class RayEntropyTrainer(RayPPOTrainer):
                         else:
                             new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
 
+                        # Additional sequence level entropy reward/penalty
+                        if self.config.algorithm.get('grpo-s', False):
+                            new_batch.batch = grpo_s(batch=new_batch.batch, 
+                                            n=self.config.actor_rollout_ref.rollout.n,
+                                            beta=self.config.algorithm.get('grpo-s-beta', 0.1))
+                            
                     if not self.config.algorithm.filter_groups.enable:
                         batch = new_batch
                     else:  # NOTE: When prompts after filtering is less than train batch size,
@@ -295,6 +355,7 @@ class RayEntropyTrainer(RayPPOTrainer):
                             lam=self.config.algorithm.lam,
                             num_repeat=self.config.actor_rollout_ref.rollout.n,
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+                            config=self.config.algorithm
                         )
 
                     # update critic

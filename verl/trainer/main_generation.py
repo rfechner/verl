@@ -38,7 +38,7 @@ from verl.utils.fs import copy_to_local
 from verl.utils.hdfs_io import makedirs
 from verl.utils.model import compute_position_id_with_mask
 from verl.workers.fsdp_workers import ActorRolloutRefWorker
-
+from tqdm import tqdm
 
 @hydra.main(config_path="config", config_name="generation", version_base=None)
 def main(config):
@@ -118,7 +118,7 @@ def main_task(config):
     output_lst = [[] for _ in range(config.data.n_samples)]
     print("Initialized Rollout Worker Group. Beginning Rollouts.")
     
-    for batch_idx in range(num_batch):
+    for batch_idx in tqdm(range(num_batch), desc='Batches'):
         print(f"[{batch_idx + 1}/{num_batch}] Start to process.")
         batch_chat_lst = chat_lst[batch_idx * config_batch_size : (batch_idx + 1) * config_batch_size]
         inputs = tokenizer.apply_chat_template(

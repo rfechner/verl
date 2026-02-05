@@ -196,6 +196,7 @@ python -u -m recipe.entropy.main_entropy \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
+    +algorithm.grpo_s=$grpo_s \
     data.train_files="$train_files" \
     data.val_files="${data_val_files:-$default_val_files}" \
     data.train_batch_size=$train_batch_size \
@@ -203,6 +204,7 @@ python -u -m recipe.entropy.main_entropy \
     data.max_response_length=$max_response_length \
     data.truncation=${data_truncation} \
     data.val_batch_size=${val_batch_size} \
+    +data.seed=$data_seed \
     actor_rollout_ref.model.use_remove_padding=${actor_model_use_remove_padding} \
     actor_rollout_ref.model.use_fused_kernels=true \
     actor_rollout_ref.model.path=$model_path \

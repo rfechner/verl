@@ -191,6 +191,7 @@ python -u -m verl.trainer.main_ppo \
     data.max_response_length=$max_response_length \
     data.truncation=${data_truncation} \
     data.val_batch_size=${val_batch_size} \
+    +data.seed=$data_seed \
     actor_rollout_ref.actor.policy_loss.loss_mode=${loss_mode} \
     actor_rollout_ref.model.use_remove_padding=${actor_model_use_remove_padding} \
     actor_rollout_ref.model.use_fused_kernels=true \
