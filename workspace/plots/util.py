@@ -59,6 +59,29 @@ def pass_at_k(rewards, k):
         return 1.0
     return 1.0 - np.prod([(n - c - i) / (n - i) for i in range(k)]) 
 
+def qwen25_7b_lowvar_baselinepassk(recompute=True, ks = 2**np.arange(9)):
+    """
+        This function collects all qwen2.5-7b 0_rollouts.jsonl files in exp05_rollouts
+        and concatenates them into a large dataframe. The estimate is then used to give a low
+        variance estimate of the pass@k.
+    """
+    if recompute:
+        rootdir = '/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b'
+        ds = [os.path.join(rootdir, d, 'val_jsonl', '0_rollouts.jsonl') for d in os.listdir(rootdir) if os.path.isdir(os.path.join(rootdir, d))]
+        dfs = []
+        for f in ds:
+            with open(f, 'r') as file:
+                dfs.append(pd.read_json(file, lines=True))
+    
+        with open('/u/rfechner/data/tmp/qw257_base.pickle', 'wb') as file:
+            pickle.dump(dfs, file)
+    else:
+        with open('/u/rfechner/data/tmp/qw257_base.pickle', 'rb') as file:
+            dfs = pickle.load(file)
+
+    data=pd.concat(dfs)
+    return calculate_pass_at_k(data, ks)
+
 def calculate_pass_at_k(data : pd.DataFrame, ks = 2**np.arange(9)):
     pass_at_values = {
         'math500' : [],

@@ -185,13 +185,14 @@ def main():
     elif args.cp:
         handle_checkpoint_validation(args.cp, args.nodes * 4) # 4 GPUs per Node have to match world_size of chkpt
         handle_model_method_validation(args.cp, args.method, args.model) # for re-loading. Make sure method/model is chosed correctly.
-    else: # we're training
-        if args.cpdir:
-            raise ValueError("Training but checkpoint directory was set. This option is only used in evaluation. To set a checkpoint use --cp pointing towards .../global_step_X directory.")
-        if args.no_validation:
-            raise ValueError("Running training without validation.")
-        if args.valn > 16:
-            raise ValueError("Running training with too high number of validation rollouts.")
+    else: # we're potentially training
+        if not args.eval:
+            if args.cpdir:
+                raise ValueError("Training but checkpoint directory was set. This option is only used in evaluation. To set a checkpoint use --cp pointing towards .../global_step_X directory.")
+            if args.no_validation:
+                raise ValueError("Running training without validation.")
+            if args.valn > 16:
+                raise ValueError("Running training with too high number of validation rollouts.")
 
     
     # from huggingface_hub import HfFolder, login
