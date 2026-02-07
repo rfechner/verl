@@ -68,6 +68,11 @@ def qwen25_7b_lowvar_baselinepassk(recompute=True, ks = 2**np.arange(9)):
     if recompute:
         rootdir = '/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b'
         ds = [os.path.join(rootdir, d, 'val_jsonl', '0_rollouts.jsonl') for d in os.listdir(rootdir) if os.path.isdir(os.path.join(rootdir, d))]
+        
+        # we have an additional source of basemodel rollouts:
+        other = '/ptmp/rfechner/out/exp17_more_rollouts/basemodel__qwen2.5_7b__gspo/val_jsonl/0_rollouts.jsonl'
+        ds.append(other)
+
         dfs = []
         for f in ds:
             with open(f, 'r') as file:
@@ -131,6 +136,9 @@ def qw7_rollouts(recompute=True) -> dict:
     if not recompute:
         return rollouts_from_disk(root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b")
     
+    print('Computing low variance estimate for Qwen Basemodel Pass@k')
+    qwen_base_lowvar_passk = qwen25_7b_lowvar_baselinepassk(recompute=recompute)
+
     qwen_root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b"
     rollout_paths = {d : os.path.join(qwen_root, d, 'val_jsonl') for d in os.listdir(qwen_root) if os.path.isdir(os.path.join(qwen_root, d))}
 
@@ -157,6 +165,7 @@ def qw7_rollouts(recompute=True) -> dict:
 
     # we have to correct for the base model archiving different pass@k values. In this analysis we'll just take the first estimate.
     base_model_mapper = {model : None for model in set([m.split('__')[0] for m in rollout_paths.keys()])}
+    base_model_mapper['qwen2.5_7b'] = qwen_base_lowvar_passk
     for method in rollout_paths.keys():
         m = method.split('__')[0]
         if base_model_mapper[m] is None:
@@ -182,6 +191,8 @@ def rollouts(recompute=True) -> dict:
     exp13_root = "/ptmp/rfechner/out/exp13_rollouts/"
     qwen_root = "/ptmp/rfechner/out/exp05_rollouts_qwen2.5-7b"
 
+    print('Computing low variance estimate for Qwen Basemodel Pass@k')
+    qwen_base_lowvar_passk = qwen25_7b_lowvar_baselinepassk(recompute=recompute)
     # mask for methods of interest
     qwen_method_mask = ['grpo-passk', 'gspo', 'grpo', 'grpo-s', 'kl-cov']
 
@@ -223,6 +234,8 @@ def rollouts(recompute=True) -> dict:
 
     # we have to correct for the base model archiving different pass@k values. In this analysis we'll just take the first estimate.
     base_model_mapper = {model : None for model in set([m.split('__')[0] for m in exp13_rollout_paths.keys()])}
+    base_model_mapper['qwen2.5_7b'] = qwen_base_lowvar_passk # precomputed low variance estimate for basemodel
+    
     for method in exp13_rollout_paths.keys():
         m = method.split('__')[0]
         if base_model_mapper[m] is None:
@@ -230,6 +243,7 @@ def rollouts(recompute=True) -> dict:
         
         # overwrite the base model's pass@k with the first found pass@k estimate to equalize pass@k for base model over methods.
         passk[method]['0'] = base_model_mapper[m]
+
 
     print(f"Serializing to {os.path.join(exp13_root, 'cache.pickle')}")
     with open(os.path.join(exp13_root, 'cache.pickle'), 'wb') as file:
